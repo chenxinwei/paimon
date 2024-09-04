@@ -53,8 +53,10 @@ public class CodeGeneratorImpl implements CodeGenerator {
     }
 
     @Override
-    public GeneratedClass<RecordEqualiser> generateRecordEqualiser(List<DataType> fieldTypes) {
-        return new EqualiserCodeGenerator(RowType.builder().fields(fieldTypes).build())
+    public GeneratedClass<RecordEqualiser> generateRecordEqualiser(
+            List<DataType> fieldTypes, int[] ignoreFields) {
+        return new EqualiserCodeGenerator(
+                        RowType.builder().fields(fieldTypes).build(), ignoreFields)
                 .generateRecordEqualiser("RecordEqualiser");
     }
 

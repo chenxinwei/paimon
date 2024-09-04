@@ -41,8 +41,10 @@ import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Function;
@@ -240,6 +242,48 @@ public class EqualiserCodeGeneratorTest {
         assertThat(equaliser.equals(GenericRow.of(fields1), GenericRow.of(fields1))).isTrue();
         assertThat(equaliser.equals(GenericRow.of(fields1), GenericRow.of(fields2)))
                 .isEqualTo(equal);
+    }
+
+    @RepeatedTest(100)
+    public void testManyFieldsWithIgnoreFields() {
+        int size = 499;
+        GeneratedData[] generatedData = new GeneratedData[size];
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        DataTypeRoot[] dataTypeRoots = DataTypeRoot.values();
+        List<Integer> ignoreFieldsList = new ArrayList<>();
+
+        for (int i = 0; i < size; i++) {
+            int index = random.nextInt(0, dataTypeRoots.length);
+            GeneratedData testData = TEST_DATA.get(dataTypeRoots[index]);
+            if (testData == null) {
+                throw new UnsupportedOperationException(
+                        "Unsupported type: " + dataTypeRoots[index]);
+            }
+            generatedData[i] = testData;
+            double sample = random.nextDouble(0, 1);
+            if (sample < 0.35) {
+                ignoreFieldsList.add(i);
+            }
+        }
+        final RecordEqualiser equaliser =
+                new EqualiserCodeGenerator(
+                                Arrays.stream(generatedData)
+                                        .map(d -> d.dataType)
+                                        .toArray(DataType[]::new),
+                                ignoreFieldsList.stream().mapToInt(Integer::valueOf).toArray())
+                        .generateRecordEqualiser("ManyFields")
+                        .newInstance(Thread.currentThread().getContextClassLoader());
+
+        Object[] fields1 = new Object[size];
+        Object[] fields2 = new Object[size];
+        for (int i = 0; i < size; i++) {
+            fields1[i] = generatedData[i].left();
+            fields2[i] =
+                    ignoreFieldsList.contains(i)
+                            ? generatedData[i].right()
+                            : generatedData[i].left();
+        }
+        assertThat(equaliser.equals(GenericRow.of(fields1), GenericRow.of(fields2))).isTrue();
     }
 
     private static <T> void assertBoolean(

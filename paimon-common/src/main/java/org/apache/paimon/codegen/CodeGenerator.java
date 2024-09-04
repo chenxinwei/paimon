@@ -54,6 +54,9 @@ public interface CodeGenerator {
      * @param fieldTypes Both the input row field types and the sort key field types. Records are *
      *     compared by the first field, then the second field, then the third field and so on. All *
      *     fields are compared in ascending order.
+     * @param ignoreFields the ignore key fields. These ignore fields are not used as comparison
+     *     fields for records.
      */
-    GeneratedClass<RecordEqualiser> generateRecordEqualiser(List<DataType> fieldTypes);
+    GeneratedClass<RecordEqualiser> generateRecordEqualiser(
+            List<DataType> fieldTypes, int[] ignoreFields);
 }

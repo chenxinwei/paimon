@@ -27,26 +27,34 @@ import org.apache.paimon.utils.TypeUtils.isPrimitive
 
 import scala.collection.JavaConverters._
 
-class EqualiserCodeGenerator(fieldTypes: Array[DataType]) {
+class EqualiserCodeGenerator(fieldTypes: Array[DataType], ignoreFields: Array[Int]) {
 
   private val RECORD_EQUALISER = className[RecordEqualiser]
   private val LEFT_INPUT = "left"
   private val RIGHT_INPUT = "right"
 
-  def this(rowType: RowType) = {
-    this(rowType.getFieldTypes.asScala.toArray)
+  def this(rowType: RowType, ignoreFields: Array[Int]) = {
+    this(rowType.getFieldTypes.asScala.toArray, ignoreFields)
+  }
+
+  def this(fieldTypes: Array[DataType]) = {
+    this(fieldTypes, null)
   }
 
   def generateRecordEqualiser(name: String): GeneratedClass[RecordEqualiser] = {
     // ignore time zone
     val ctx = new CodeGeneratorContext
     val className = newName(name)
+    val containsIgnoreField = ignoreFields != null && ignoreFields.length > 0
 
-    val equalsMethodCodes = for (idx <- fieldTypes.indices) yield generateEqualsMethod(ctx, idx)
-    val equalsMethodCalls = for (idx <- fieldTypes.indices) yield {
-      val methodName = getEqualsMethodName(idx)
-      s"""result = result && $methodName($LEFT_INPUT, $RIGHT_INPUT);"""
-    }
+    val equalsMethodCodes =
+      for (idx <- fieldTypes.indices if ignoreFields == null || !ignoreFields.contains(idx))
+        yield generateEqualsMethod(ctx, idx)
+    val equalsMethodCalls =
+      for (idx <- fieldTypes.indices if ignoreFields == null || !ignoreFields.contains(idx)) yield {
+        val methodName = getEqualsMethodName(idx)
+        s"""result = result && $methodName($LEFT_INPUT, $RIGHT_INPUT);"""
+      }
 
     val classCode =
       s"""
@@ -59,7 +67,7 @@ class EqualiserCodeGenerator(fieldTypes: Array[DataType]) {
 
           @Override
           public boolean equals($ROW_DATA $LEFT_INPUT, $ROW_DATA $RIGHT_INPUT) {
-            if ($LEFT_INPUT instanceof $BINARY_ROW && $RIGHT_INPUT instanceof $BINARY_ROW) {
+            if ($LEFT_INPUT instanceof $BINARY_ROW && $RIGHT_INPUT instanceof $BINARY_ROW && !$containsIgnoreField) {
               return $LEFT_INPUT.equals($RIGHT_INPUT);
             }
 

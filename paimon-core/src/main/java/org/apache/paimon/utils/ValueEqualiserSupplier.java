@@ -34,12 +34,20 @@ public class ValueEqualiserSupplier implements SerializableSupplier<RecordEquali
 
     private final List<DataType> fieldTypes;
 
+    private final int[] ignoreFields;
+
     public ValueEqualiserSupplier(RowType keyType) {
         this.fieldTypes = keyType.getFieldTypes();
+        this.ignoreFields = null;
+    }
+
+    public ValueEqualiserSupplier(RowType keyType, int[] ignoreFields) {
+        this.fieldTypes = keyType.getFieldTypes();
+        this.ignoreFields = ignoreFields;
     }
 
     @Override
     public RecordEqualiser get() {
-        return newRecordEqualiser(fieldTypes);
+        return newRecordEqualiser(fieldTypes, ignoreFields);
     }
 }

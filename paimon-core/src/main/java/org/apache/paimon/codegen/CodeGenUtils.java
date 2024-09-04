@@ -94,7 +94,16 @@ public class CodeGenUtils {
                 RecordEqualiser.class,
                 fieldTypes,
                 IntStream.range(0, fieldTypes.size()).toArray(),
-                () -> getCodeGenerator().generateRecordEqualiser(fieldTypes));
+                () -> getCodeGenerator().generateRecordEqualiser(fieldTypes, null));
+    }
+
+    public static RecordEqualiser newRecordEqualiser(
+            List<DataType> fieldTypes, int[] ignoreFields) {
+        return generate(
+                RecordEqualiser.class,
+                fieldTypes,
+                IntStream.range(0, fieldTypes.size()).toArray(),
+                () -> getCodeGenerator().generateRecordEqualiser(fieldTypes, ignoreFields));
     }
 
     private static <T> T generate(
