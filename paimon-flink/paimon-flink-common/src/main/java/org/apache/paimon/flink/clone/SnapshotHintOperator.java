@@ -84,7 +84,9 @@ public class SnapshotHintOperator extends AbstractStreamOperator<CloneFileInfo>
             targetTableSnapshotManager.commitLatestHint(snapshotId);
             for (Snapshot snapshot : targetTableSnapshotManager.safelyGetAllSnapshots()) {
                 if (snapshot.id() != snapshotId) {
-                    targetTableSnapshotManager.deleteSnapshot(snapshot.id());
+                    targetTableSnapshotManager
+                            .fileIO()
+                            .deleteQuietly(targetTableSnapshotManager.snapshotPath(snapshot.id()));
                 }
             }
         }

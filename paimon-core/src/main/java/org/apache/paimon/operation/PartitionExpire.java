@@ -95,6 +95,11 @@ public class PartitionExpire {
                 maxExpireNum);
     }
 
+    public PartitionExpire withLock(Lock lock) {
+        this.commit.withLock(lock);
+        return this;
+    }
+
     public PartitionExpire withMaxExpireNum(int maxExpireNum) {
         this.maxExpireNum = maxExpireNum;
         return this;

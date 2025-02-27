@@ -21,14 +21,11 @@ package org.apache.paimon.catalog;
 import org.apache.paimon.annotation.Public;
 import org.apache.paimon.fs.FileIOLoader;
 import org.apache.paimon.fs.Path;
-import org.apache.paimon.hadoop.SerializableConfiguration;
 import org.apache.paimon.options.Options;
 
 import org.apache.hadoop.conf.Configuration;
 
 import javax.annotation.Nullable;
-
-import java.io.Serializable;
 
 import static org.apache.paimon.options.CatalogOptions.WAREHOUSE;
 import static org.apache.paimon.utils.HadoopUtils.getHadoopConfiguration;
@@ -40,12 +37,10 @@ import static org.apache.paimon.utils.Preconditions.checkNotNull;
  * @since 0.4.0
  */
 @Public
-public class CatalogContext implements Serializable {
-
-    private static final long serialVersionUID = 1L;
+public class CatalogContext {
 
     private final Options options;
-    private final SerializableConfiguration hadoopConf;
+    private final Configuration hadoopConf;
     @Nullable private final FileIOLoader preferIOLoader;
     @Nullable private final FileIOLoader fallbackIOLoader;
 
@@ -55,9 +50,7 @@ public class CatalogContext implements Serializable {
             @Nullable FileIOLoader preferIOLoader,
             @Nullable FileIOLoader fallbackIOLoader) {
         this.options = checkNotNull(options);
-        this.hadoopConf =
-                new SerializableConfiguration(
-                        hadoopConf == null ? getHadoopConfiguration(options) : hadoopConf);
+        this.hadoopConf = hadoopConf == null ? getHadoopConfiguration(options) : hadoopConf;
         this.preferIOLoader = preferIOLoader;
         this.fallbackIOLoader = fallbackIOLoader;
     }
@@ -99,7 +92,7 @@ public class CatalogContext implements Serializable {
 
     /** Return hadoop {@link Configuration}. */
     public Configuration hadoopConf() {
-        return hadoopConf.get();
+        return hadoopConf;
     }
 
     @Nullable

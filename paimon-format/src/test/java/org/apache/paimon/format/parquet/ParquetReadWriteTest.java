@@ -26,7 +26,6 @@ import org.apache.paimon.data.GenericRow;
 import org.apache.paimon.data.InternalMap;
 import org.apache.paimon.data.InternalRow;
 import org.apache.paimon.data.Timestamp;
-import org.apache.paimon.data.serializer.InternalRowSerializer;
 import org.apache.paimon.format.FormatReaderContext;
 import org.apache.paimon.format.FormatWriter;
 import org.apache.paimon.format.parquet.writer.RowDataParquetBuilder;
@@ -472,9 +471,7 @@ public class ParquetReadWriteTest {
                         new FormatReaderContext(
                                 new LocalFileIO(), path, new LocalFileIO().getFileSize(path)));
         List<InternalRow> results = new ArrayList<>(1283);
-        InternalRowSerializer internalRowSerializer =
-                new InternalRowSerializer(NESTED_ARRAY_MAP_TYPE);
-        reader.forEachRemaining(row -> results.add(internalRowSerializer.copy(row)));
+        reader.forEachRemaining(results::add);
         compareNestedRow(rows, results);
     }
 
@@ -537,7 +534,7 @@ public class ParquetReadWriteTest {
                         .withId(baseId + depthLimit * 2 + 1);
         Type expected =
                 new MessageType(
-                        ParquetSchemaConverter.PAIMON_SCHEMA,
+                        "table",
                         Types.primitive(INT32, Type.Repetition.OPTIONAL).named("a").withId(0),
                         ConversionPatterns.listOfElements(
                                         Type.Repetition.OPTIONAL,
@@ -558,7 +555,7 @@ public class ParquetReadWriteTest {
                                                 .withId(baseId - depthLimit * 2 - 1),
                                         outerMapValueType)
                                 .withId(2));
-        Type actual = ParquetSchemaConverter.convertToParquetMessageType(rowType);
+        Type actual = ParquetSchemaConverter.convertToParquetMessageType("table", rowType);
         assertThat(actual).isEqualTo(expected);
     }
 
@@ -909,7 +906,8 @@ public class ParquetReadWriteTest {
         Configuration conf = new Configuration();
         conf.setInt("parquet.block.size", rowGroupSize);
         MessageType schema =
-                ParquetSchemaConverter.convertToParquetMessageType(NESTED_ARRAY_MAP_TYPE);
+                ParquetSchemaConverter.convertToParquetMessageType(
+                        "paimon-parquet", NESTED_ARRAY_MAP_TYPE);
         try (ParquetWriter<Group> writer =
                 ExampleParquetWriter.builder(
                                 HadoopOutputFile.fromPath(
@@ -1090,6 +1088,9 @@ public class ParquetReadWriteTest {
                     origin.getRow(5, 2).getArray(1).getRow(0, 2).getInt(1),
                     result.getRow(5, 2).getArray(1).getRow(0, 2).getInt(1));
             Assertions.assertTrue(result.isNullAt(6));
+            Assertions.assertTrue(result.getRow(6, 2).isNullAt(0));
+            Assertions.assertTrue(result.getRow(6, 2).isNullAt(1));
+            Assertions.assertTrue(result.getRow(6, 2).isNullAt(2));
         }
     }
 

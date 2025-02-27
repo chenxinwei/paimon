@@ -22,27 +22,71 @@ import org.apache.paimon.data.InternalArray;
 import org.apache.paimon.data.columnar.ArrayColumnVector;
 import org.apache.paimon.data.columnar.ColumnVector;
 import org.apache.paimon.data.columnar.ColumnarArray;
+import org.apache.paimon.data.columnar.writable.WritableColumnVector;
 
 /** This class represents a nullable heap array column vector. */
-public class HeapArrayVector extends AbstractArrayBasedVector implements ArrayColumnVector {
+public class HeapArrayVector extends AbstractHeapVector
+        implements WritableColumnVector, ArrayColumnVector {
+
+    private long[] offsets;
+    private long[] lengths;
+    private int size;
+    private ColumnVector child;
+
+    public HeapArrayVector(int len) {
+        super(len);
+        this.offsets = new long[len];
+        this.lengths = new long[len];
+    }
 
     public HeapArrayVector(int len, ColumnVector vector) {
-        super(len, new ColumnVector[] {vector});
+        super(len);
+        this.offsets = new long[len];
+        this.lengths = new long[len];
+        this.child = vector;
+    }
+
+    public long[] getOffsets() {
+        return offsets;
+    }
+
+    public void setOffsets(long[] offsets) {
+        this.offsets = offsets;
+    }
+
+    public long[] getLengths() {
+        return lengths;
+    }
+
+    public void setLengths(long[] lengths) {
+        this.lengths = lengths;
+    }
+
+    public int getSize() {
+        return size;
+    }
+
+    public void setSize(int size) {
+        this.size = size;
+    }
+
+    public ColumnVector getChild() {
+        return child;
     }
 
     public void setChild(ColumnVector child) {
-        children[0] = child;
+        this.child = child;
     }
 
     @Override
     public InternalArray getArray(int i) {
         long offset = offsets[i];
         long length = lengths[i];
-        return new ColumnarArray(children[0], (int) offset, (int) length);
+        return new ColumnarArray(child, (int) offset, (int) length);
     }
 
     @Override
     public ColumnVector getColumnVector() {
-        return children[0];
+        return child;
     }
 }

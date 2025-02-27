@@ -19,14 +19,18 @@
 package org.apache.paimon.format.parquet;
 
 import org.apache.paimon.data.BinaryString;
+import org.apache.paimon.data.DataGetters;
 import org.apache.paimon.data.GenericArray;
 import org.apache.paimon.data.GenericMap;
 import org.apache.paimon.data.GenericRow;
 import org.apache.paimon.data.InternalArray;
 import org.apache.paimon.data.InternalMap;
 import org.apache.paimon.data.InternalRow;
+import org.apache.paimon.data.columnar.ArrayColumnVector;
+import org.apache.paimon.data.columnar.BytesColumnVector;
 import org.apache.paimon.data.columnar.ColumnVector;
 import org.apache.paimon.data.columnar.ColumnarRowIterator;
+import org.apache.paimon.data.columnar.IntColumnVector;
 import org.apache.paimon.format.FormatReaderContext;
 import org.apache.paimon.format.FormatWriter;
 import org.apache.paimon.format.parquet.writer.RowDataParquetBuilder;
@@ -34,6 +38,7 @@ import org.apache.paimon.fs.Path;
 import org.apache.paimon.fs.local.LocalFileIO;
 import org.apache.paimon.options.Options;
 import org.apache.paimon.reader.RecordReader;
+import org.apache.paimon.reader.VectorizedRecordIterator;
 import org.apache.paimon.types.DataTypes;
 import org.apache.paimon.types.RowType;
 import org.apache.paimon.utils.StringUtils;
@@ -47,12 +52,15 @@ import javax.annotation.Nullable;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -65,6 +73,11 @@ public class ParquetColumnVectorTest {
     private @TempDir java.nio.file.Path tempDir;
 
     private static final Random RND = ThreadLocalRandom.current();
+    private static final BiFunction<ColumnVector, Integer, String> BYTES_COLUMN_VECTOR_STRING_FUNC =
+            (cv, i) ->
+                    cv.isNullAt(i)
+                            ? "null"
+                            : new String(((BytesColumnVector) cv).getBytes(i).getBytes());
 
     @Test
     public void testNormalStrings() throws IOException {
@@ -82,13 +95,7 @@ public class ParquetColumnVectorTest {
         }
 
         ColumnarRowIterator iterator = createRecordIterator(rowType, rows);
-        for (int i = 0; i < numRows; i++) {
-            InternalRow row = iterator.next();
-            assert row != null;
-            assertThat(row.getString(0)).isEqualTo(rows.get(i).getString(0));
-            assertThat(row.getString(1)).isEqualTo(rows.get(i).getString(1));
-            assertThat(row.getString(2)).isEqualTo(rows.get(i).getString(2));
-        }
+        assertThat(iterator).isInstanceOf(VectorizedRecordIterator.class);
     }
 
     @Test
@@ -99,9 +106,11 @@ public class ParquetColumnVectorTest {
                         .build();
 
         int numRows = RND.nextInt(5) + 5;
+        ArrayObject expectedData = new ArrayObject();
         List<InternalRow> rows = new ArrayList<>(numRows);
         for (int i = 0; i < numRows; i++) {
             if (RND.nextBoolean()) {
+                expectedData.add(null);
                 rows.add(GenericRow.of((Object) null));
                 continue;
             }
@@ -111,6 +120,7 @@ public class ParquetColumnVectorTest {
                     IntStream.range(0, currentSize)
                             .mapToObj(idx -> randomString())
                             .collect(Collectors.toList());
+            expectedData.add(currentStringArray);
             GenericArray array =
                     new GenericArray(
                             currentStringArray.stream().map(BinaryString::fromString).toArray());
@@ -118,21 +128,23 @@ public class ParquetColumnVectorTest {
         }
 
         ColumnarRowIterator iterator = createRecordIterator(rowType, rows);
+        assertThat(iterator).isNotInstanceOf(VectorizedRecordIterator.class);
+        InternalArray.ElementGetter getter = InternalArray.createElementGetter(DataTypes.STRING());
 
         // validate row by row
         for (int i = 0; i < numRows; i++) {
             InternalRow row = iterator.next();
-            assert row != null;
-            InternalRow expectedRow = rows.get(i);
-            if (expectedRow.isNullAt(0)) {
-                assertThat(row.isNullAt(0)).isTrue();
-            } else {
-                InternalArray array = row.getArray(0);
-                InternalArray expectedArray = expectedRow.getArray(0);
-                testArrayStringEqual(array, expectedArray);
-            }
+            expectedData.validateRow(row, i, getter);
         }
         assertThat(iterator.next()).isNull();
+
+        // validate ColumnVector
+        //        ArrayColumnVector arrayColumnVector = (ArrayColumnVector) batch.columns[0];
+        //        expectedData.validateColumnVector(arrayColumnVector, getter);
+        //
+        //        expectedData.validateInnerChild(
+        //                arrayColumnVector.getColumnVector(), BYTES_COLUMN_VECTOR_STRING_FUNC);
+        //
         iterator.releaseBatch();
     }
 
@@ -146,19 +158,23 @@ public class ParquetColumnVectorTest {
                         .build();
 
         int numRows = RND.nextInt(5) + 5;
+        ArrayArrayObject expectedData = new ArrayArrayObject();
         List<InternalRow> rows = new ArrayList<>(numRows);
         for (int i = 0; i < numRows; i++) {
             // outer null row
             if (RND.nextBoolean()) {
+                expectedData.add(null);
                 rows.add(GenericRow.of((Object) null));
                 continue;
             }
 
             int arraySize = RND.nextInt(5);
+            ArrayObject arrayObject = new ArrayObject();
             GenericArray[] innerArrays = new GenericArray[arraySize];
             for (int aIdx = 0; aIdx < arraySize; aIdx++) {
                 // inner null array
                 if (RND.nextBoolean()) {
+                    arrayObject.add(null);
                     innerArrays[aIdx] = null;
                     continue;
                 }
@@ -168,31 +184,39 @@ public class ParquetColumnVectorTest {
                         IntStream.range(0, arrayStringSize)
                                 .mapToObj(idx -> randomString())
                                 .collect(Collectors.toList());
+                arrayObject.add(currentStringArray);
                 innerArrays[aIdx] =
                         new GenericArray(
                                 currentStringArray.stream()
                                         .map(BinaryString::fromString)
                                         .toArray());
             }
+            expectedData.add(arrayObject);
             rows.add(GenericRow.of(new GenericArray(innerArrays)));
         }
 
         ColumnarRowIterator iterator = createRecordIterator(rowType, rows);
+        assertThat(iterator).isNotInstanceOf(VectorizedRecordIterator.class);
+        InternalArray.ElementGetter getter = InternalArray.createElementGetter(DataTypes.STRING());
 
         // validate row by row
         for (int i = 0; i < numRows; i++) {
             InternalRow row = iterator.next();
-            assertThat(row).isNotNull();
-            InternalRow expected = rows.get(i);
-            if (expected.isNullAt(0)) {
-                assertThat(row.isNullAt(0)).isTrue();
-            } else {
-                InternalArray array = row.getArray(0);
-                InternalArray expectedArray = expected.getArray(0);
-                testArrayArrayStringEqual(array, expectedArray);
-            }
+            expectedData.validateRow(row, i, getter);
         }
         assertThat(iterator.next()).isNull();
+
+        // validate column vector
+        //        ArrayColumnVector arrayColumnVector = (ArrayColumnVector) batch.columns[0];
+        //
+        //        expectedData.validateOuterArray(arrayColumnVector, getter);
+        //
+        //        ArrayColumnVector innerArrayColumnVector =
+        //                (ArrayColumnVector) arrayColumnVector.getColumnVector();
+        //        expectedData.validateInnerArray(innerArrayColumnVector, getter);
+        //
+        //        ColumnVector columnVector = innerArrayColumnVector.getColumnVector();
+        //        expectedData.validateInnerChild(columnVector, BYTES_COLUMN_VECTOR_STRING_FUNC);
     }
 
     @Test
@@ -203,9 +227,11 @@ public class ParquetColumnVectorTest {
                         .build();
 
         int numRows = RND.nextInt(5) + 5;
+        ArrayObject expectedData = new ArrayObject();
         List<InternalRow> rows = new ArrayList<>(numRows);
         for (int i = 0; i < numRows; i++) {
             if (RND.nextBoolean()) {
+                expectedData.add(null);
                 rows.add(GenericRow.of((Object) null));
                 continue;
             }
@@ -215,6 +241,7 @@ public class ParquetColumnVectorTest {
                     IntStream.range(0, currentSize)
                             .mapToObj(idx -> randomString())
                             .collect(Collectors.toList());
+            expectedData.add(currentStringArray);
             Map<Integer, BinaryString> map = new HashMap<>();
             for (int idx = 0; idx < currentSize; idx++) {
                 map.put(idx, fromString(currentStringArray.get(idx)));
@@ -223,29 +250,34 @@ public class ParquetColumnVectorTest {
         }
 
         ColumnarRowIterator iterator = createRecordIterator(rowType, rows);
+        assertThat(iterator).isNotInstanceOf(VectorizedRecordIterator.class);
+        InternalArray.ElementGetter getter = InternalArray.createElementGetter(DataTypes.STRING());
 
         // validate row by row
         for (int i = 0; i < numRows; i++) {
             InternalRow row = iterator.next();
             assertThat(row).isNotNull();
-            InternalRow expectedRow = rows.get(i);
-            if (expectedRow.isNullAt(0)) {
+            List<?> expected = expectedData.data.get(i);
+            if (expected == null) {
                 assertThat(row.isNullAt(0)).isTrue();
             } else {
                 InternalMap map = row.getMap(0);
-                InternalMap expectedMap = expectedRow.getMap(0);
-                assertThat(map.size()).isEqualTo(expectedMap.size());
-
-                InternalArray keyArray = map.keyArray();
+                validateMapKeyArray(map.keyArray());
                 InternalArray valueArray = map.valueArray();
-                InternalArray expectedKeyArray = expectedMap.keyArray();
-                InternalArray expectedValueArray = expectedMap.valueArray();
-
-                testArrayIntEqual(keyArray, expectedKeyArray);
-                testArrayStringEqual(valueArray, expectedValueArray);
+                expectedData.validateNonNullArray(expected, valueArray, getter);
             }
         }
         assertThat(iterator.next()).isNull();
+
+        // validate ColumnVector
+        //        MapColumnVector mapColumnVector = (MapColumnVector) batch.columns[0];
+        //        IntColumnVector keyColumnVector = (IntColumnVector)
+        // mapColumnVector.getKeyColumnVector();
+        //        validateMapKeyColumnVector(keyColumnVector, expectedData);
+        //        ColumnVector valueColumnVector = mapColumnVector.getValueColumnVector();
+        //        expectedData.validateInnerChild(valueColumnVector,
+        // BYTES_COLUMN_VECTOR_STRING_FUNC);
+
         iterator.releaseBatch();
     }
 
@@ -259,19 +291,23 @@ public class ParquetColumnVectorTest {
                         .build();
 
         int numRows = RND.nextInt(5) + 5;
+        ArrayArrayObject expectedData = new ArrayArrayObject();
         List<InternalRow> rows = new ArrayList<>(numRows);
         for (int i = 0; i < numRows; i++) {
             // outer null row
-            if (RND.nextBoolean() || i == 0) {
+            if (RND.nextBoolean()) {
+                expectedData.add(null);
                 rows.add(GenericRow.of((Object) null));
                 continue;
             }
 
             int mapSize = RND.nextInt(5);
+            ArrayObject arrayObject = new ArrayObject();
             Map<Integer, GenericArray> map = new HashMap<>();
             for (int mIdx = 0; mIdx < mapSize; mIdx++) {
                 // null array value
                 if (RND.nextBoolean()) {
+                    arrayObject.add(null);
                     map.put(mIdx, null);
                     continue;
                 }
@@ -281,6 +317,7 @@ public class ParquetColumnVectorTest {
                         IntStream.range(0, currentSize)
                                 .mapToObj(idx -> randomString())
                                 .collect(Collectors.toList());
+                arrayObject.add(currentStringArray);
 
                 map.put(
                         mIdx,
@@ -289,71 +326,73 @@ public class ParquetColumnVectorTest {
                                         .map(BinaryString::fromString)
                                         .toArray()));
             }
+            expectedData.add(arrayObject);
             rows.add(GenericRow.of(new GenericMap(map)));
         }
 
         ColumnarRowIterator iterator = createRecordIterator(rowType, rows);
+        assertThat(iterator).isNotInstanceOf(VectorizedRecordIterator.class);
+
+        InternalArray.ElementGetter getter = InternalArray.createElementGetter(DataTypes.STRING());
 
         // validate row by row
         for (int i = 0; i < numRows; i++) {
             InternalRow row = iterator.next();
             assertThat(row).isNotNull();
-            InternalRow expected = rows.get(i);
-            if (expected.isNullAt(0)) {
+            ArrayObject expected = expectedData.data.get(i);
+            if (expected == null) {
                 assertThat(row.isNullAt(0)).isTrue();
             } else {
                 InternalMap map = row.getMap(0);
-                InternalMap expectedMap = expected.getMap(0);
-                assertThat(map.keyArray().toIntArray())
-                        .containsExactly(expectedMap.keyArray().toIntArray());
+                validateMapKeyArray(map.keyArray());
                 InternalArray valueArray = map.valueArray();
-                InternalArray expectedValueArray = expectedMap.valueArray();
-                testArrayArrayStringEqual(valueArray, expectedValueArray);
+                expected.validateArrayGetter(valueArray, getter);
             }
         }
         assertThat(iterator.next()).isNull();
+
+        // validate column vector
+        //        MapColumnVector mapColumnVector = (MapColumnVector) batch.columns[0];
+        //        IntColumnVector keyColumnVector = (IntColumnVector)
+        // mapColumnVector.getKeyColumnVector();
+        //        validateMapKeyColumnVector(keyColumnVector, expectedData);
+        //
+        //        ArrayColumnVector valueColumnVector =
+        //                (ArrayColumnVector) mapColumnVector.getValueColumnVector();
+        //        expectedData.validateInnerArray(valueColumnVector, getter);
+        //        expectedData.validateInnerChild(
+        //                valueColumnVector.getColumnVector(), BYTES_COLUMN_VECTOR_STRING_FUNC);
+        //
         iterator.releaseBatch();
-    }
-
-    private void testArrayArrayStringEqual(
-            InternalArray valueArray, InternalArray expectedValueArray) {
-        assertThat(valueArray.size()).isEqualTo(expectedValueArray.size());
-        for (int j = 0; j < expectedValueArray.size(); j++) {
-            if (expectedValueArray.isNullAt(j)) {
-                assertThat(valueArray.isNullAt(j)).isTrue();
-            } else {
-                InternalArray valueString = valueArray.getArray(j);
-                InternalArray expectedValueString = expectedValueArray.getArray(j);
-                testArrayStringEqual(valueString, expectedValueString);
-            }
-        }
-    }
-
-    private void testArrayStringEqual(InternalArray valueArray, InternalArray expectedValueArray) {
-        assertThat(valueArray.size()).isEqualTo(expectedValueArray.size());
-        for (int j = 0; j < expectedValueArray.size(); j++) {
-            if (expectedValueArray.isNullAt(j)) {
-                assertThat(valueArray.isNullAt(j)).isTrue();
-            } else {
-                assertThat(valueArray.getString(j)).isEqualTo(expectedValueArray.getString(j));
-            }
-        }
-    }
-
-    private void testArrayIntEqual(InternalArray valueArray, InternalArray expectedValueArray) {
-        assertThat(valueArray.size()).isEqualTo(expectedValueArray.size());
-        for (int j = 0; j < expectedValueArray.size(); j++) {
-            if (expectedValueArray.isNullAt(j)) {
-                assertThat(valueArray.isNullAt(j)).isTrue();
-            } else {
-                assertThat(valueArray.getInt(j)).isEqualTo(expectedValueArray.getInt(j));
-            }
-        }
     }
 
     private void validateMapKeyArray(InternalArray keyArray) {
         for (int i = 0; i < keyArray.size(); i++) {
             assertThat(keyArray.getInt(i)).isEqualTo(i);
+        }
+    }
+
+    private void validateMapKeyColumnVector(
+            IntColumnVector columnVector, ArrayObject expectedData) {
+        int idx = 0;
+        for (List<?> values : expectedData.data) {
+            if (values != null) {
+                for (int i = 0; i < values.size(); i++) {
+                    assertThat(columnVector.getInt(idx++)).isEqualTo(i);
+                }
+            }
+        }
+    }
+
+    private void validateMapKeyColumnVector(
+            IntColumnVector columnVector, ArrayArrayObject expectedData) {
+        int idx = 0;
+        for (ArrayObject arrayObject : expectedData.data) {
+            if (arrayObject != null) {
+                for (int i = 0; i < arrayObject.data.size(); i++) {
+                    assertThat(columnVector.getInt(idx++)).isEqualTo(i);
+                }
+            }
         }
     }
 
@@ -370,15 +409,21 @@ public class ParquetColumnVectorTest {
                         .build();
 
         int numRows = RND.nextInt(5) + 5;
+        ArrayObject expectedData = new ArrayObject();
         List<InternalRow> rows = new ArrayList<>(numRows);
+        List<Integer> f0 = new ArrayList<>();
         for (int i = 0; i < numRows; i++) {
             if (RND.nextBoolean()) {
+                expectedData.add(null);
+                f0.add(null);
                 rows.add(GenericRow.of((Object) null));
                 continue;
             }
 
             if (RND.nextInt(5) == 0) {
                 // set f1 null
+                expectedData.add(null);
+                f0.add(i);
                 rows.add(GenericRow.of(GenericRow.of(i, null)));
                 continue;
             }
@@ -388,6 +433,8 @@ public class ParquetColumnVectorTest {
                     IntStream.range(0, currentSize)
                             .mapToObj(idx -> randomString())
                             .collect(Collectors.toList());
+            expectedData.add(currentStringArray);
+            f0.add(i);
             GenericArray array =
                     new GenericArray(
                             currentStringArray.stream().map(BinaryString::fromString).toArray());
@@ -395,35 +442,53 @@ public class ParquetColumnVectorTest {
         }
 
         ColumnarRowIterator iterator = createRecordIterator(rowType, rows);
+        assertThat(iterator).isNotInstanceOf(VectorizedRecordIterator.class);
+        InternalArray.ElementGetter getter = InternalArray.createElementGetter(DataTypes.STRING());
 
         // validate row by row
         for (int i = 0; i < numRows; i++) {
             InternalRow row = iterator.next();
-            InternalRow expectedRow = rows.get(i);
-
             assertThat(row).isNotNull();
-            if (expectedRow.isNullAt(0)) {
+            if (f0.get(i) == null && expectedData.data.get(i) == null) {
                 assertThat(row.isNullAt(0)).isTrue();
             } else {
                 InternalRow innerRow = row.getRow(0, 2);
-                InternalRow expectedInnerRow = expectedRow.getRow(0, 2);
 
-                if (expectedInnerRow.isNullAt(0)) {
+                if (f0.get(i) == null) {
                     assertThat(innerRow.isNullAt(0)).isTrue();
                 } else {
-                    assertThat(innerRow.getInt(0)).isEqualTo(i);
+                    assertThat(innerRow.getInt(0)).isEqualTo(f0.get(i));
                 }
 
-                if (expectedInnerRow.isNullAt(1)) {
+                if (expectedData.data.get(i) == null) {
                     assertThat(innerRow.isNullAt(1)).isTrue();
                 } else {
-                    InternalArray valueArray = innerRow.getArray(1);
-                    InternalArray expectedValueArray = expectedInnerRow.getArray(1);
-                    testArrayStringEqual(valueArray, expectedValueArray);
+                    expectedData.validateNonNullArray(
+                            expectedData.data.get(i), innerRow.getArray(1), getter);
                 }
             }
         }
         assertThat(iterator.next()).isNull();
+
+        // validate ColumnVector
+        //        RowColumnVector rowColumnVector = (RowColumnVector) batch.columns[0];
+        //        VectorizedColumnBatch innerBatch = rowColumnVector.getBatch();
+        //
+        //        IntColumnVector intColumnVector = (IntColumnVector) innerBatch.columns[0];
+        //        for (int i = 0; i < numRows; i++) {
+        //            Integer f0Value = f0.get(i);
+        //            if (f0Value == null) {
+        //                assertThat(intColumnVector.isNullAt(i)).isTrue();
+        //            } else {
+        //                assertThat(intColumnVector.getInt(i)).isEqualTo(f0Value);
+        //            }
+        //        }
+        //
+        //        ArrayColumnVector arrayColumnVector = (ArrayColumnVector) innerBatch.columns[1];
+        //        expectedData.validateColumnVector(arrayColumnVector, getter);
+        //        expectedData.validateInnerChild(
+        //                arrayColumnVector.getColumnVector(), BYTES_COLUMN_VECTOR_STRING_FUNC);
+
         iterator.releaseBatch();
     }
 
@@ -461,6 +526,7 @@ public class ParquetColumnVectorTest {
         rows.add(GenericRow.of(array3));
 
         ColumnarRowIterator iterator = createRecordIterator(rowType, rows);
+        assertThat(iterator).isNotInstanceOf(VectorizedRecordIterator.class);
 
         // validate row by row
         InternalRow row0 = iterator.next();
@@ -513,6 +579,45 @@ public class ParquetColumnVectorTest {
 
         assertThat(iterator.next()).isNull();
 
+        // validate ColumnVector
+        //        ArrayColumnVector arrayColumnVector = (ArrayColumnVector) batch.columns[0];
+        //        assertThat(arrayColumnVector.isNullAt(0)).isFalse();
+        //        assertThat(arrayColumnVector.isNullAt(1)).isTrue();
+        //        assertThat(arrayColumnVector.isNullAt(2)).isFalse();
+        //        assertThat(arrayColumnVector.isNullAt(3)).isFalse();
+        //
+        //        RowColumnVector rowColumnVector = (RowColumnVector)
+        // arrayColumnVector.getColumnVector();
+        //        BytesColumnVector f0Vector = (BytesColumnVector)
+        // rowColumnVector.getBatch().columns[0];
+        //        for (int i = 0; i < 3; i++) {
+        //            BinaryString s = f0.get(i);
+        //            if (s == null) {
+        //                assertThat(f0Vector.isNullAt(i)).isTrue();
+        //            } else {
+        //                assertThat(new
+        // String(f0Vector.getBytes(i).getBytes())).isEqualTo(s.toString());
+        //            }
+        //        }
+        //        ArrayColumnVector f1Vector = (ArrayColumnVector)
+        // rowColumnVector.getBatch().columns[1];
+        //        InternalArray internalArray0 = f1Vector.getArray(0);
+        //        assertThat(internalArray0.size()).isEqualTo(2);
+        //        assertThat(internalArray0.isNullAt(0)).isFalse();
+        //        assertThat(internalArray0.isNullAt(1)).isTrue();
+        //
+        //        InternalArray internalArray1 = f1Vector.getArray(1);
+        //        assertThat(internalArray1.size()).isEqualTo(0);
+        //
+        //        InternalArray internalArray2 = f1Vector.getArray(2);
+        //        assertThat(internalArray2.size()).isEqualTo(1);
+        //        assertThat(internalArray2.isNullAt(0)).isFalse();
+        //
+        //        IntColumnVector intColumnVector = (IntColumnVector) f1Vector.getColumnVector();
+        //        assertThat(intColumnVector.getInt(0)).isEqualTo(0);
+        //        assertThat(intColumnVector.isNullAt(1)).isTrue();
+        //        assertThat(intColumnVector.getInt(2)).isEqualTo(1);
+
         iterator.releaseBatch();
     }
 
@@ -543,6 +648,48 @@ public class ParquetColumnVectorTest {
 
         ColumnarRowIterator iterator =
                 createRecordIterator(rowType, Arrays.asList(row0, row1, row2, row3));
+        assertThat(iterator).isNotInstanceOf(VectorizedRecordIterator.class);
+
+        // validate column vector
+        //        VectorizedColumnBatch batch = iterator.batch();
+        //        RowColumnVector row = (RowColumnVector) batch.columns[0];
+        //
+        //        assertThat(row.isNullAt(0)).isTrue();
+        //        assertThat(row.isNullAt(1)).isFalse();
+        //        assertThat(row.isNullAt(2)).isFalse();
+        //        assertThat(row.isNullAt(3)).isFalse();
+        //
+        //        ArrayColumnVector f0 = (ArrayColumnVector) row.getBatch().columns[0];
+        //        assertThat(f0.isNullAt(0)).isTrue();
+        //        assertThat(f0.isNullAt(1)).isTrue();
+        //        assertThat(f0.isNullAt(2)).isFalse();
+        //        assertThat(f0.isNullAt(3)).isFalse();
+        //
+        //        RowColumnVector arrayRow = (RowColumnVector) f0.getColumnVector();
+        //        assertThat(arrayRow.isNullAt(0)).isFalse();
+        //        assertThat(arrayRow.isNullAt(1)).isFalse();
+        //        assertThat(arrayRow.isNullAt(2)).isTrue();
+        //
+        //        IntColumnVector arrayRowInt = (IntColumnVector) arrayRow.getBatch().columns[0];
+        //        assertThat(arrayRowInt.isNullAt(0)).isTrue();
+        //        assertThat(arrayRowInt.isNullAt(1)).isFalse();
+        //        assertThat(arrayRowInt.isNullAt(2)).isTrue();
+        //
+        //        assertThat(arrayRowInt.getInt(1)).isEqualTo(22);
+        //
+        //        RowColumnVector f1 = (RowColumnVector) row.getBatch().columns[1];
+        //        assertThat(f1.isNullAt(0)).isTrue();
+        //        assertThat(f1.isNullAt(1)).isFalse();
+        //        assertThat(f1.isNullAt(2)).isFalse();
+        //        assertThat(f1.isNullAt(3)).isTrue();
+        //
+        //        IntColumnVector rowInt = (IntColumnVector) f1.getBatch().columns[0];
+        //        assertThat(rowInt.isNullAt(0)).isTrue();
+        //        assertThat(rowInt.isNullAt(1)).isFalse();
+        //        assertThat(rowInt.isNullAt(2)).isTrue();
+        //        assertThat(rowInt.isNullAt(3)).isTrue();
+        //
+        //        assertThat(rowInt.getInt(1)).isEqualTo(1);
 
         // validate per row
         InternalRow internalRow0 = iterator.next();
@@ -606,5 +753,161 @@ public class ParquetColumnVectorTest {
     @Nullable
     private String randomString() {
         return RND.nextInt(5) == 0 ? null : StringUtils.getRandomString(RND, 1, 10);
+    }
+
+    /** Store generated data of ARRAY[STRING] and provide validated methods. */
+    private static class ArrayObject {
+
+        public final List<List<?>> data;
+
+        public ArrayObject() {
+            this.data = new ArrayList<>();
+        }
+
+        public void add(List<?> objects) {
+            data.add(objects);
+        }
+
+        public void validateRow(InternalRow row, int i, InternalArray.ElementGetter getter) {
+            assertThat(row).isNotNull();
+            List<?> expected = data.get(i);
+            if (expected == null) {
+                assertThat(row.isNullAt(0)).isTrue();
+            } else {
+                validateNonNullArray(expected, row.getArray(0), getter);
+            }
+        }
+
+        public void validateColumnVector(
+                ArrayColumnVector arrayColumnVector, InternalArray.ElementGetter getter) {
+            for (int i = 0; i < data.size(); i++) {
+                List<?> expected = data.get(i);
+                if (expected == null) {
+                    assertThat(arrayColumnVector.isNullAt(i)).isTrue();
+                } else {
+                    validateNonNullArray(expected, arrayColumnVector.getArray(i), getter);
+                }
+            }
+        }
+
+        public void validateArrayGetter(DataGetters arrays, InternalArray.ElementGetter getter) {
+            for (int i = 0; i < data.size(); i++) {
+                List<?> expected = data.get(i);
+                if (expected == null) {
+                    assertThat(arrays.isNullAt(i)).isTrue();
+                } else {
+                    validateNonNullArray(expected, arrays.getArray(i), getter);
+                }
+            }
+        }
+
+        public void validateNonNullArray(
+                List<?> expected, InternalArray array, InternalArray.ElementGetter getter) {
+            int arraySize = array.size();
+            assertThat(arraySize).isEqualTo(expected.size());
+            for (int i = 0; i < arraySize; i++) {
+                String value = String.valueOf(getter.getElementOrNull(array, i));
+                assertThat(value).isEqualTo(String.valueOf(expected.get(i)));
+            }
+        }
+
+        public void validateInnerChild(
+                ColumnVector columnVector, BiFunction<ColumnVector, Integer, String> stringGetter) {
+            // it doesn't contain null rows
+            List<?> expandedData =
+                    data.stream()
+                            .filter(Objects::nonNull)
+                            .flatMap(Collection::stream)
+                            .collect(Collectors.toList());
+            for (int i = 0; i < expandedData.size(); i++) {
+                assertThat(stringGetter.apply(columnVector, i))
+                        .isEqualTo(String.valueOf(expandedData.get(i)));
+            }
+        }
+    }
+
+    /** Store generated data of ARRAY[ARRAY[STRING]] and provide validated methods. */
+    private static class ArrayArrayObject {
+
+        public final List<ArrayObject> data;
+
+        public ArrayArrayObject() {
+            this.data = new ArrayList<>();
+        }
+
+        public void add(@Nullable ArrayObject arrayObjects) {
+            data.add(arrayObjects);
+        }
+
+        private List<List<?>> expand() {
+            // it doesn't contain null rows of outer array
+            return data.stream()
+                    .filter(Objects::nonNull)
+                    .flatMap(i -> i.data.stream())
+                    .collect(Collectors.toList());
+        }
+
+        private List<?> expandInner() {
+            // it doesn't contain null rows of outer and inner array
+            return expand().stream()
+                    .filter(Objects::nonNull)
+                    .flatMap(Collection::stream)
+                    .collect(Collectors.toList());
+        }
+
+        public void validateRow(InternalRow row, int i, InternalArray.ElementGetter getter) {
+            assertThat(row).isNotNull();
+            ArrayObject expectedArray = data.get(i);
+            if (expectedArray == null) {
+                assertThat(row.isNullAt(0)).isTrue();
+            } else {
+                InternalArray outerArray = row.getArray(0);
+                assertThat(outerArray.size()).isEqualTo(expectedArray.data.size());
+                expectedArray.validateArrayGetter(outerArray, getter);
+            }
+        }
+
+        public void validateOuterArray(
+                ArrayColumnVector arrayColumnVector,
+                InternalArray.ElementGetter innerElementGetter) {
+            for (int i = 0; i < data.size(); i++) {
+                ArrayObject expected = data.get(i);
+                if (expected == null) {
+                    assertThat(arrayColumnVector.isNullAt(i)).isTrue();
+                } else {
+                    InternalArray array = arrayColumnVector.getArray(i);
+                    expected.validateArrayGetter(array, innerElementGetter);
+                }
+            }
+        }
+
+        public void validateInnerArray(
+                ArrayColumnVector arrayColumnVector,
+                InternalArray.ElementGetter innerElementGetter) {
+            List<List<?>> expandedData = expand();
+            for (int i = 0; i < expandedData.size(); i++) {
+                List<?> expected = expandedData.get(i);
+                if (expected == null) {
+                    assertThat(arrayColumnVector.isNullAt(i)).isTrue();
+                } else {
+                    InternalArray array = arrayColumnVector.getArray(i);
+                    int size = array.size();
+                    assertThat(size).isEqualTo(expected.size());
+                    for (int j = 0; j < size; j++) {
+                        assertThat(String.valueOf(innerElementGetter.getElementOrNull(array, j)))
+                                .isEqualTo(String.valueOf(expected.get(j)));
+                    }
+                }
+            }
+        }
+
+        public void validateInnerChild(
+                ColumnVector columnVector, BiFunction<ColumnVector, Integer, String> stringGetter) {
+            List<?> expandedData = expandInner();
+            for (int i = 0; i < expandedData.size(); i++) {
+                assertThat(stringGetter.apply(columnVector, i))
+                        .isEqualTo(String.valueOf(expandedData.get(i)));
+            }
+        }
     }
 }

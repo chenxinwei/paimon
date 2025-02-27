@@ -19,6 +19,7 @@
 package org.apache.paimon.iceberg.migrate;
 
 import org.apache.paimon.catalog.Identifier;
+import org.apache.paimon.fs.FileIO;
 import org.apache.paimon.iceberg.IcebergOptions;
 import org.apache.paimon.options.Options;
 
@@ -27,12 +28,12 @@ public class IcebergMigrateHadoopMetadataFactory implements IcebergMigrateMetada
 
     @Override
     public String identifier() {
-        return IcebergOptions.StorageType.HADOOP_CATALOG + "_migrate";
+        return IcebergOptions.StorageType.HADOOP_CATALOG.toString() + "_migrate";
     }
 
     @Override
     public IcebergMigrateHadoopMetadata create(
-            Identifier icebergIdentifier, Options icebergOptions) {
-        return new IcebergMigrateHadoopMetadata(icebergIdentifier, icebergOptions);
+            Identifier icebergIdentifier, FileIO fileIO, Options icebergOptions) {
+        return new IcebergMigrateHadoopMetadata(icebergIdentifier, fileIO, icebergOptions);
     }
 }

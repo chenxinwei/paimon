@@ -20,6 +20,7 @@ package org.apache.paimon.rest.auth;
 
 import org.apache.paimon.annotation.VisibleForTesting;
 import org.apache.paimon.options.Options;
+import org.apache.paimon.rest.RESTCatalog;
 import org.apache.paimon.rest.RESTUtil;
 
 import org.slf4j.Logger;
@@ -33,38 +34,37 @@ import java.util.concurrent.TimeUnit;
 import static org.apache.paimon.rest.RESTCatalog.HEADER_PREFIX;
 import static org.apache.paimon.rest.RESTUtil.extractPrefixMap;
 
-/** Authentication session. */
+/** Auth session. */
 public class AuthSession {
 
-    static final int REFRESH_NUM_RETRIES = 5;
+    static final int TOKEN_REFRESH_NUM_RETRIES = 5;
     static final long MIN_REFRESH_WAIT_MILLIS = 10;
     static final long MAX_REFRESH_WINDOW_MILLIS = 300_000; // 5 minutes
 
-    private static final Logger LOG = LoggerFactory.getLogger(AuthSession.class);
-
-    private final AuthProvider authProvider;
+    private static final Logger log = LoggerFactory.getLogger(AuthSession.class);
+    private final CredentialsProvider credentialsProvider;
     private volatile Map<String, String> headers;
 
-    public AuthSession(Map<String, String> headers, AuthProvider authProvider) {
-        this.authProvider = authProvider;
-        this.headers = RESTUtil.merge(headers, this.authProvider.authHeader());
+    public AuthSession(Map<String, String> headers, CredentialsProvider credentialsProvider) {
+        this.credentialsProvider = credentialsProvider;
+        this.headers = RESTUtil.merge(headers, this.credentialsProvider.authHeader());
     }
 
-    public static AuthSession fromRefreshAuthProvider(
+    public static AuthSession fromRefreshCredentialsProvider(
             ScheduledExecutorService executor,
             Map<String, String> headers,
-            AuthProvider authProvider) {
-        AuthSession session = new AuthSession(headers, authProvider);
+            CredentialsProvider credentialsProvider) {
+        AuthSession session = new AuthSession(headers, credentialsProvider);
 
         long startTimeMillis = System.currentTimeMillis();
-        Optional<Long> expiresAtMillisOpt = authProvider.expiresAtMillis();
+        Optional<Long> expiresAtMillisOpt = credentialsProvider.expiresAtMillis();
 
-        // when init session if token expire time is in the past, refresh it and update
+        // when init session if credentials expire time is in the past, refresh it and update
         // expiresAtMillis
         if (expiresAtMillisOpt.isPresent() && expiresAtMillisOpt.get() <= startTimeMillis) {
             boolean refreshSuccessful = session.refresh();
             if (refreshSuccessful) {
-                expiresAtMillisOpt = session.authProvider.expiresAtMillis();
+                expiresAtMillisOpt = session.credentialsProvider.expiresAtMillis();
             }
         }
 
@@ -76,20 +76,21 @@ public class AuthSession {
     }
 
     public Map<String, String> getHeaders() {
-        if (this.authProvider.keepRefreshed() && this.authProvider.willSoonExpire()) {
+        if (this.credentialsProvider.keepRefreshed() && this.credentialsProvider.willSoonExpire()) {
             refresh();
         }
         return headers;
     }
 
     public Boolean refresh() {
-        if (this.authProvider.supportRefresh()
-                && this.authProvider.keepRefreshed()
-                && this.authProvider.expiresInMills().isPresent()) {
-            boolean isSuccessful = this.authProvider.refresh();
+        if (this.credentialsProvider.supportRefresh()
+                && this.credentialsProvider.keepRefreshed()
+                && this.credentialsProvider.expiresInMills().isPresent()) {
+            boolean isSuccessful = this.credentialsProvider.refresh();
             if (isSuccessful) {
                 Map<String, String> currentHeaders = this.headers;
-                this.headers = RESTUtil.merge(currentHeaders, this.authProvider.authHeader());
+                this.headers =
+                        RESTUtil.merge(currentHeaders, this.credentialsProvider.authHeader());
             }
             return isSuccessful;
         }
@@ -118,45 +119,44 @@ public class AuthSession {
             AuthSession session,
             long expiresAtMillis,
             int retryTimes) {
-        if (retryTimes < REFRESH_NUM_RETRIES) {
+        if (retryTimes < TOKEN_REFRESH_NUM_RETRIES) {
             long expiresInMillis = expiresAtMillis - System.currentTimeMillis();
             long timeToWait = getTimeToWaitByExpiresInMills(expiresInMillis);
 
             executor.schedule(
-                    () -> doRefresh(executor, session, expiresAtMillis, retryTimes),
+                    () -> {
+                        long refreshStartTime = System.currentTimeMillis();
+                        boolean isSuccessful = session.refresh();
+                        if (isSuccessful) {
+                            scheduleTokenRefresh(
+                                    executor,
+                                    session,
+                                    refreshStartTime
+                                            + session.credentialsProvider.expiresInMills().get(),
+                                    0);
+                        } else {
+                            scheduleTokenRefresh(
+                                    executor, session, expiresAtMillis, retryTimes + 1);
+                        }
+                    },
                     timeToWait,
                     TimeUnit.MILLISECONDS);
         } else {
-            LOG.warn("Failed to refresh token after {} retries.", REFRESH_NUM_RETRIES);
-        }
-    }
-
-    private static void doRefresh(
-            ScheduledExecutorService executor,
-            AuthSession session,
-            long expiresAtMillis,
-            int retryTimes) {
-        long refreshStartTime = System.currentTimeMillis();
-        boolean isSuccessful = session.refresh();
-        if (isSuccessful) {
-            scheduleTokenRefresh(
-                    executor,
-                    session,
-                    refreshStartTime + session.authProvider.expiresInMills().get(),
-                    0);
-        } else {
-            scheduleTokenRefresh(executor, session, expiresAtMillis, retryTimes + 1);
+            log.warn("Failed to refresh token after {} retries.", TOKEN_REFRESH_NUM_RETRIES);
         }
     }
 
     public static AuthSession createAuthSession(
             Options options, ScheduledExecutorService refreshExecutor) {
         Map<String, String> baseHeader = extractPrefixMap(options, HEADER_PREFIX);
-        AuthProvider authProvider = AuthProvider.create(options);
-        if (authProvider.keepRefreshed()) {
-            return AuthSession.fromRefreshAuthProvider(refreshExecutor, baseHeader, authProvider);
+        CredentialsProvider credentialsProvider =
+                CredentialsProviderFactory.createCredentialsProvider(
+                        options, RESTCatalog.class.getClassLoader());
+        if (credentialsProvider.keepRefreshed()) {
+            return AuthSession.fromRefreshCredentialsProvider(
+                    refreshExecutor, baseHeader, credentialsProvider);
         } else {
-            return new AuthSession(baseHeader, authProvider);
+            return new AuthSession(baseHeader, credentialsProvider);
         }
     }
 }

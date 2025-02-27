@@ -40,13 +40,6 @@ public class HeapShortVector extends AbstractHeapVector implements WritableShort
     }
 
     @Override
-    void reserveForHeapVector(int newCapacity) {
-        if (vector.length < newCapacity) {
-            vector = Arrays.copyOf(vector, newCapacity);
-        }
-    }
-
-    @Override
     public short getShort(int i) {
         if (dictionary == null) {
             return vector[i];
@@ -63,15 +56,5 @@ public class HeapShortVector extends AbstractHeapVector implements WritableShort
     @Override
     public void fill(short value) {
         Arrays.fill(vector, value);
-    }
-
-    @Override
-    public void reset() {
-        super.reset();
-        if (vector.length != capacity) {
-            vector = new short[capacity];
-        } else {
-            Arrays.fill(vector, (short) 0);
-        }
     }
 }

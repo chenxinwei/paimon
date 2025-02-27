@@ -46,13 +46,6 @@ public class HeapDoubleVector extends AbstractHeapVector implements WritableDoub
     }
 
     @Override
-    void reserveForHeapVector(int newCapacity) {
-        if (vector.length < newCapacity) {
-            vector = Arrays.copyOf(vector, newCapacity);
-        }
-    }
-
-    @Override
     public double getDouble(int i) {
         if (dictionary == null) {
             return vector[i];
@@ -93,15 +86,5 @@ public class HeapDoubleVector extends AbstractHeapVector implements WritableDoub
     @Override
     public void fill(double value) {
         Arrays.fill(vector, value);
-    }
-
-    @Override
-    public void reset() {
-        super.reset();
-        if (vector.length != capacity) {
-            vector = new double[capacity];
-        } else {
-            Arrays.fill(vector, 0);
-        }
     }
 }

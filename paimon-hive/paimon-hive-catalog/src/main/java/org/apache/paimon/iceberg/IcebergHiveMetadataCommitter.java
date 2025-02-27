@@ -30,11 +30,9 @@ import org.apache.paimon.types.DataField;
 import org.apache.paimon.utils.Preconditions;
 
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.hive.common.StatsSetupConst;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.metastore.IMetaStoreClient;
 import org.apache.hadoop.hive.metastore.api.Database;
-import org.apache.hadoop.hive.metastore.api.EnvironmentContext;
 import org.apache.hadoop.hive.metastore.api.FieldSchema;
 import org.apache.hadoop.hive.metastore.api.NoSuchObjectException;
 import org.apache.hadoop.hive.metastore.api.SerDeInfo;
@@ -147,20 +145,9 @@ public class IcebergHiveMetadataCommitter implements IcebergMetadataCommitter {
                     .put("previous_metadata_location", baseMetadataPath.toString());
         }
 
-        Options options = new Options(table.options());
-        boolean skipAWSGlueArchive = options.get(IcebergOptions.GLUE_SKIP_ARCHIVE);
-        EnvironmentContext environmentContext = new EnvironmentContext();
-        environmentContext.putToProperties(StatsSetupConst.CASCADE, StatsSetupConst.TRUE);
-        environmentContext.putToProperties(
-                "skipAWSGlueArchive", Boolean.toString(skipAWSGlueArchive));
-
         clients.execute(
                 client ->
-                        client.alter_table_with_environmentContext(
-                                icebergHiveDatabase,
-                                icebergHiveTable,
-                                hiveTable,
-                                environmentContext));
+                        client.alter_table(icebergHiveDatabase, icebergHiveTable, hiveTable, true));
     }
 
     private boolean databaseExists(String databaseName) throws Exception {

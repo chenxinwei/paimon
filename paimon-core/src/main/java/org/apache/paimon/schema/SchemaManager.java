@@ -25,6 +25,7 @@ import org.apache.paimon.catalog.Catalog;
 import org.apache.paimon.catalog.Identifier;
 import org.apache.paimon.fs.FileIO;
 import org.apache.paimon.fs.Path;
+import org.apache.paimon.operation.Lock;
 import org.apache.paimon.schema.SchemaChange.AddColumn;
 import org.apache.paimon.schema.SchemaChange.DropColumn;
 import org.apache.paimon.schema.SchemaChange.RemoveOption;
@@ -66,6 +67,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -89,6 +91,8 @@ public class SchemaManager implements Serializable {
     private final FileIO fileIO;
     private final Path tableRoot;
 
+    @Nullable private transient Lock lock;
+
     private final String branch;
 
     public SchemaManager(FileIO fileIO, Path tableRoot) {
@@ -104,6 +108,11 @@ public class SchemaManager implements Serializable {
 
     public SchemaManager copyWithBranch(String branchName) {
         return new SchemaManager(fileIO, tableRoot, branchName);
+    }
+
+    public SchemaManager withLock(@Nullable Lock lock) {
+        this.lock = lock;
+        return this;
     }
 
     public Optional<TableSchema> latest() {
@@ -773,7 +782,12 @@ public class SchemaManager implements Serializable {
         SchemaValidation.validateTableSchema(newSchema);
         SchemaValidation.validateFallbackBranch(this, newSchema);
         Path schemaPath = toSchemaPath(newSchema.id());
-        return fileIO.tryToWriteAtomic(schemaPath, newSchema.toString());
+        Callable<Boolean> callable =
+                () -> fileIO.tryToWriteAtomic(schemaPath, newSchema.toString());
+        if (lock == null) {
+            return callable.call();
+        }
+        return lock.runWithLock(callable);
     }
 
     /** Read schema for schema id. */

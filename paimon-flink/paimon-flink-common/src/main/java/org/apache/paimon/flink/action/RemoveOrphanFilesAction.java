@@ -23,6 +23,7 @@ import javax.annotation.Nullable;
 import java.util.Map;
 
 import static org.apache.paimon.flink.orphan.FlinkOrphanFilesClean.executeDatabaseOrphanFiles;
+import static org.apache.paimon.operation.OrphanFilesClean.createFileCleaner;
 import static org.apache.paimon.operation.OrphanFilesClean.olderThanMillis;
 
 /** Action to remove the orphan data files and metadata files. */
@@ -60,7 +61,7 @@ public class RemoveOrphanFilesAction extends ActionBase {
                 env,
                 catalog,
                 olderThanMillis(olderThan),
-                dryRun,
+                createFileCleaner(catalog, dryRun),
                 parallelism == null ? null : Integer.parseInt(parallelism),
                 databaseName,
                 tableName);

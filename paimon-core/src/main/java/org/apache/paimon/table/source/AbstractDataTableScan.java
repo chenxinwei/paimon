@@ -245,10 +245,7 @@ public abstract class AbstractDataTableScan implements DataTableScan {
 
         Options conf = options.toConfiguration();
         TagManager tagManager =
-                new TagManager(
-                        snapshotManager.fileIO(),
-                        snapshotManager.tablePath(),
-                        snapshotManager.branch());
+                new TagManager(snapshotManager.fileIO(), snapshotManager.tablePath());
         if (conf.contains(CoreOptions.INCREMENTAL_BETWEEN)) {
             Pair<String, String> incrementalBetween = options.incrementalBetween();
             Optional<Tag> startTag = tagManager.get(incrementalBetween.getLeft());

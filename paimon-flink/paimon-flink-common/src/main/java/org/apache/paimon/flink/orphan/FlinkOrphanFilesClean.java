@@ -32,6 +32,7 @@ import org.apache.paimon.operation.OrphanFilesClean;
 import org.apache.paimon.table.FileStoreTable;
 import org.apache.paimon.table.Table;
 import org.apache.paimon.utils.Pair;
+import org.apache.paimon.utils.SerializableConsumer;
 
 import org.apache.flink.api.common.RuntimeExecutionMode;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
@@ -75,9 +76,9 @@ public class FlinkOrphanFilesClean extends OrphanFilesClean {
     public FlinkOrphanFilesClean(
             FileStoreTable table,
             long olderThanMillis,
-            boolean dryRun,
+            SerializableConsumer<Path> fileCleaner,
             @Nullable Integer parallelism) {
-        super(table, olderThanMillis, dryRun);
+        super(table, olderThanMillis, fileCleaner);
         this.parallelism = parallelism;
     }
 
@@ -296,7 +297,7 @@ public class FlinkOrphanFilesClean extends OrphanFilesClean {
                                         if (!used.contains(path.getName())) {
                                             emittedFilesCount++;
                                             emittedFilesLen += fileInfo.getRight();
-                                            cleanFile(path);
+                                            fileCleaner.accept(path);
                                             LOG.info("Dry clean: {}", path);
                                         }
                                     }
@@ -318,7 +319,7 @@ public class FlinkOrphanFilesClean extends OrphanFilesClean {
             StreamExecutionEnvironment env,
             Catalog catalog,
             long olderThanMillis,
-            boolean dryRun,
+            SerializableConsumer<Path> fileCleaner,
             @Nullable Integer parallelism,
             String databaseName,
             @Nullable String tableName)
@@ -340,7 +341,10 @@ public class FlinkOrphanFilesClean extends OrphanFilesClean {
 
             DataStream<CleanOrphanFilesResult> clean =
                     new FlinkOrphanFilesClean(
-                                    (FileStoreTable) table, olderThanMillis, dryRun, parallelism)
+                                    (FileStoreTable) table,
+                                    olderThanMillis,
+                                    fileCleaner,
+                                    parallelism)
                             .doOrphanClean(env);
             if (clean != null) {
                 orphanFilesCleans.add(clean);

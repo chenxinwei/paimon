@@ -32,8 +32,6 @@ import org.apache.arrow.vector.VectorSchemaRoot;
 
 import javax.annotation.Nullable;
 
-import java.io.IOException;
-
 /** To convert {@link VectorizedColumnBatch} to Arrow format. */
 public class ArrowVectorizedBatchConverter extends ArrowBatchConverter {
 
@@ -67,27 +65,22 @@ public class ArrowVectorizedBatchConverter extends ArrowBatchConverter {
         FileRecordIterator<InternalRow> innerIterator = iterator.iterator();
         this.batch = ((VectorizedRecordIterator) innerIterator).batch();
 
-        try {
-            DeletionVector deletionVector = iterator.deletionVector();
-            int originNumRows = this.batch.getNumRows();
-            IntArrayList picked = new IntArrayList(originNumRows);
-            for (int i = 0; i < originNumRows; i++) {
-                innerIterator.next();
-                long returnedPosition = innerIterator.returnedPosition();
-                if (!deletionVector.isDeleted(returnedPosition)) {
-                    picked.add(i);
-                }
+        long firstReturnedPosition = innerIterator.returnedPosition() + 1;
+        DeletionVector deletionVector = iterator.deletionVector();
+        int originNumRows = this.batch.getNumRows();
+        IntArrayList picked = new IntArrayList(originNumRows);
+        for (int i = 0; i < originNumRows; i++) {
+            long returnedPosition = firstReturnedPosition + i;
+            if (!deletionVector.isDeleted(returnedPosition)) {
+                picked.add(i);
             }
-
-            if (picked.size() == originNumRows) {
-                this.pickedInColumn = null;
-                this.totalNumRows = originNumRows;
-            } else {
-                this.pickedInColumn = picked.toArray();
-                this.totalNumRows = this.pickedInColumn.length;
-            }
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to apply deletion vector.", e);
+        }
+        if (picked.size() == originNumRows) {
+            this.pickedInColumn = null;
+            this.totalNumRows = originNumRows;
+        } else {
+            this.pickedInColumn = picked.toArray();
+            this.totalNumRows = this.pickedInColumn.length;
         }
 
         this.startIndex = 0;

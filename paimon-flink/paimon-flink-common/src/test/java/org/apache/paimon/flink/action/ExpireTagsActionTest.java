@@ -23,9 +23,7 @@ import org.apache.paimon.table.FileStoreTable;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
-import java.nio.file.Path;
 import java.time.LocalDateTime;
 
 import static org.apache.paimon.flink.util.ReadWriteTableTestUtil.bEnv;
@@ -34,8 +32,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /** IT cases for {@link ExpireTagsAction}. */
 public class ExpireTagsActionTest extends ActionITCaseBase {
-
-    @TempDir private Path tempExternalPath;
 
     @BeforeEach
     public void setUp() {
@@ -49,26 +45,6 @@ public class ExpireTagsActionTest extends ActionITCaseBase {
                         + " PRIMARY KEY (id) NOT ENFORCED)"
                         + " WITH ('bucket'='1', 'write-only'='true')");
 
-        expireTags();
-    }
-
-    @Test
-    public void testExpireTagsWithExternalPath() throws Exception {
-        String externalPath = "file://" + tempExternalPath;
-        bEnv.executeSql(
-                "CREATE TABLE T (id STRING, name STRING,"
-                        + " PRIMARY KEY (id) NOT ENFORCED)"
-                        + " WITH ("
-                        + "'data-file.external-paths'='"
-                        + externalPath
-                        + "',"
-                        + "'data-file.external-paths.strategy' = 'round-robin',"
-                        + "'write-only'='true')");
-
-        expireTags();
-    }
-
-    public void expireTags() throws Exception {
         FileStoreTable table = getFileStoreTable("T");
 
         // generate 5 snapshots

@@ -26,34 +26,22 @@ import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.annotation.JsonGet
 import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.annotation.JsonProperty;
 
-/** Request for renaming. */
+/** Request for renaming table. */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class RenameTableRequest implements RESTRequest {
 
-    private static final String FIELD_SOURCE = "source";
-    private static final String FIELD_DESTINATION = "destination";
+    private static final String FIELD_NEW_IDENTIFIER_NAME = "newIdentifier";
 
-    @JsonProperty(FIELD_SOURCE)
-    private final Identifier source;
-
-    @JsonProperty(FIELD_DESTINATION)
-    private final Identifier destination;
+    @JsonProperty(FIELD_NEW_IDENTIFIER_NAME)
+    private final Identifier newIdentifier;
 
     @JsonCreator
-    public RenameTableRequest(
-            @JsonProperty(FIELD_SOURCE) Identifier source,
-            @JsonProperty(FIELD_DESTINATION) Identifier destination) {
-        this.source = source;
-        this.destination = destination;
+    public RenameTableRequest(@JsonProperty(FIELD_NEW_IDENTIFIER_NAME) Identifier newIdentifier) {
+        this.newIdentifier = newIdentifier;
     }
 
-    @JsonGetter(FIELD_DESTINATION)
-    public Identifier getDestination() {
-        return destination;
-    }
-
-    @JsonGetter(FIELD_SOURCE)
-    public Identifier getSource() {
-        return source;
+    @JsonGetter(FIELD_NEW_IDENTIFIER_NAME)
+    public Identifier getNewIdentifier() {
+        return newIdentifier;
     }
 }

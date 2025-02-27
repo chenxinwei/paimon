@@ -69,19 +69,12 @@ public class FieldMergeMapAgg extends FieldAggregator {
 
     @Override
     public Object retract(Object accumulator, Object retractField) {
-        // it's hard to mark the input is retracted without accumulator
         if (accumulator == null) {
             return null;
         }
 
-        // nothing to be retracted
-        if (retractField == null) {
-            return accumulator;
-        }
+        InternalMap acc = (InternalMap) accumulator;
         InternalMap retract = (InternalMap) retractField;
-        if (retract.size() == 0) {
-            return accumulator;
-        }
 
         InternalArray retractKeyArray = retract.keyArray();
         Set<Object> retractKeys = new HashSet<>();
@@ -89,7 +82,6 @@ public class FieldMergeMapAgg extends FieldAggregator {
             retractKeys.add(keyGetter.getElementOrNull(retractKeyArray, i));
         }
 
-        InternalMap acc = (InternalMap) accumulator;
         Map<Object, Object> resultMap = new HashMap<>();
         InternalArray accKeyArray = acc.keyArray();
         InternalArray accValueArray = acc.valueArray();

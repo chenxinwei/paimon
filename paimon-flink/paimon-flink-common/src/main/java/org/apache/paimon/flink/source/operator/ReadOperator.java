@@ -91,7 +91,11 @@ public class ReadOperator extends AbstractStreamOperator<RowData>
                                 .getSpillingDirectoriesPaths());
         this.read = readBuilder.newRead().withIOManager(ioManager);
         this.reuseRow = new FlinkRowData(null);
-        this.reuseRecord = new StreamRecord<>(null);
+        if (nestedProjectedRowData != null) {
+            this.reuseRecord = new StreamRecord<>(nestedProjectedRowData);
+        } else {
+            this.reuseRecord = new StreamRecord<>(reuseRow);
+        }
         this.idlingStarted();
     }
 
@@ -122,11 +126,8 @@ public class ReadOperator extends AbstractStreamOperator<RowData>
                 }
 
                 reuseRow.replace(iterator.next());
-                if (nestedProjectedRowData == null) {
-                    reuseRecord.replace(reuseRow);
-                } else {
-                    nestedProjectedRowData.replaceRow(reuseRow);
-                    reuseRecord.replace(nestedProjectedRowData);
+                if (nestedProjectedRowData != null) {
+                    nestedProjectedRowData.replaceRow(this.reuseRow);
                 }
                 output.collect(reuseRecord);
             }

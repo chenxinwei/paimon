@@ -18,7 +18,6 @@
 
 package org.apache.paimon.privilege;
 
-import org.apache.paimon.catalog.AbstractCatalog;
 import org.apache.paimon.catalog.Catalog;
 import org.apache.paimon.catalog.CatalogLoader;
 import org.apache.paimon.catalog.DelegateCatalog;
@@ -57,14 +56,10 @@ public class PrivilegedCatalog extends DelegateCatalog {
     }
 
     public static Catalog tryToCreate(Catalog catalog, Options options) {
-        if (!(rootCatalog(catalog) instanceof AbstractCatalog)) {
-            return catalog;
-        }
-
         FileBasedPrivilegeManagerLoader fileBasedPrivilegeManagerLoader =
                 new FileBasedPrivilegeManagerLoader(
-                        ((AbstractCatalog) rootCatalog(catalog)).warehouse(),
-                        ((AbstractCatalog) rootCatalog(catalog)).fileIO(),
+                        catalog.warehouse(),
+                        catalog.fileIO(),
                         options.get(PrivilegedCatalog.USER),
                         options.get(PrivilegedCatalog.PASSWORD));
         FileBasedPrivilegeManager fileBasedPrivilegeManager =

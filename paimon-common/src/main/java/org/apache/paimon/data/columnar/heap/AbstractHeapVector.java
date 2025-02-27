@@ -47,23 +47,23 @@ public abstract class AbstractHeapVector extends AbstractWritableVector
     /** Reusable column for ids of dictionary. */
     protected HeapIntVector dictionaryIds;
 
-    public AbstractHeapVector(int capacity) {
-        super(capacity);
-        isNull = new boolean[capacity];
+    private final int len;
+
+    public AbstractHeapVector(int len) {
+        isNull = new boolean[len];
+        this.len = len;
     }
 
-    /** Resets the column to default state. - fills the isNull array with false. */
+    /**
+     * Resets the column to default state. - fills the isNull array with false. - sets noNulls to
+     * true.
+     */
     @Override
     public void reset() {
-        super.reset();
-        if (isNull.length != capacity) {
-            isNull = new boolean[capacity];
-        } else {
+        if (!noNulls) {
             Arrays.fill(isNull, false);
         }
-        if (dictionaryIds != null) {
-            dictionaryIds.reset();
-        }
+        noNulls = true;
     }
 
     @Override
@@ -90,7 +90,7 @@ public abstract class AbstractHeapVector extends AbstractWritableVector
 
     @Override
     public boolean isNullAt(int i) {
-        return isAllNull || (!noNulls && isNull[i]);
+        return !noNulls && isNull[i];
     }
 
     @Override
@@ -118,12 +118,7 @@ public abstract class AbstractHeapVector extends AbstractWritableVector
     }
 
     @Override
-    protected void reserveInternal(int newCapacity) {
-        if (isNull.length < newCapacity) {
-            isNull = Arrays.copyOf(isNull, newCapacity);
-        }
-        reserveForHeapVector(newCapacity);
+    public int getLen() {
+        return this.len;
     }
-
-    abstract void reserveForHeapVector(int newCapacity);
 }

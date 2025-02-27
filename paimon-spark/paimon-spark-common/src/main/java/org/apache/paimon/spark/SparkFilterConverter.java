@@ -105,10 +105,10 @@ public class SparkFilterConverter {
             return builder.equal(index, literal);
         } else if (filter instanceof EqualNullSafe) {
             EqualNullSafe eq = (EqualNullSafe) filter;
-            int index = fieldIndex(eq.attribute());
             if (eq.value() == null) {
-                return builder.isNull(index);
+                return builder.isNull(fieldIndex(eq.attribute()));
             } else {
+                int index = fieldIndex(eq.attribute());
                 Object literal = convertLiteral(index, eq.value());
                 return builder.equal(index, literal);
             }

@@ -18,52 +18,47 @@
 
 package org.apache.paimon.data.columnar.heap;
 
-import org.apache.paimon.data.columnar.ColumnVector;
 import org.apache.paimon.data.columnar.ColumnarRow;
 import org.apache.paimon.data.columnar.RowColumnVector;
 import org.apache.paimon.data.columnar.VectorizedColumnBatch;
 import org.apache.paimon.data.columnar.writable.WritableColumnVector;
 
 /** This class represents a nullable heap row column vector. */
-public class HeapRowVector extends AbstractStructVector
+public class HeapRowVector extends AbstractHeapVector
         implements WritableColumnVector, RowColumnVector {
 
-    private VectorizedColumnBatch vectorizedColumnBatch;
+    private WritableColumnVector[] fields;
 
-    public HeapRowVector(int len, ColumnVector... fields) {
-        super(len, fields);
-        vectorizedColumnBatch = new VectorizedColumnBatch(children);
+    public HeapRowVector(int len, WritableColumnVector... fields) {
+        super(len);
+        this.fields = fields;
+    }
+
+    public WritableColumnVector[] getFields() {
+        return fields;
     }
 
     @Override
     public ColumnarRow getRow(int i) {
-        ColumnarRow columnarRow = new ColumnarRow(vectorizedColumnBatch);
+        ColumnarRow columnarRow = new ColumnarRow(new VectorizedColumnBatch(fields));
         columnarRow.setRowId(i);
         return columnarRow;
     }
 
     @Override
     public VectorizedColumnBatch getBatch() {
-        return vectorizedColumnBatch;
+        return new VectorizedColumnBatch(fields);
     }
 
     @Override
     public void reset() {
         super.reset();
-        for (ColumnVector field : children) {
-            if (field instanceof WritableColumnVector) {
-                ((WritableColumnVector) field).reset();
-            }
+        for (WritableColumnVector field : fields) {
+            field.reset();
         }
     }
 
-    @Override
-    void reserveForHeapVector(int newCapacity) {
-        // Nothing to store.
-    }
-
     public void setFields(WritableColumnVector[] fields) {
-        System.arraycopy(fields, 0, this.children, 0, fields.length);
-        this.vectorizedColumnBatch = new VectorizedColumnBatch(children);
+        this.fields = fields;
     }
 }

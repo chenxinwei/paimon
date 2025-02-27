@@ -23,13 +23,10 @@ import org.apache.paimon.data.PartitionInfo;
 import org.apache.paimon.fs.Path;
 import org.apache.paimon.reader.FileRecordIterator;
 import org.apache.paimon.reader.RecordReader;
-import org.apache.paimon.utils.LongIterator;
 import org.apache.paimon.utils.RecyclableIterator;
 import org.apache.paimon.utils.VectorMappingUtils;
 
 import javax.annotation.Nullable;
-
-import static org.apache.paimon.utils.Preconditions.checkArgument;
 
 /**
  * A {@link RecordReader.RecordIterator} that returns {@link InternalRow}s. The next row is set by
@@ -43,10 +40,8 @@ public class ColumnarRowIterator extends RecyclableIterator<InternalRow>
     protected final Runnable recycler;
 
     protected int num;
-    protected int index;
-    protected int returnedPositionIndex;
-    protected long returnedPosition;
-    protected LongIterator positionIterator;
+    protected int nextPos;
+    protected long nextFilePos;
 
     public ColumnarRowIterator(Path filePath, ColumnarRow row, @Nullable Runnable recycler) {
         super(recycler);
@@ -56,22 +51,17 @@ public class ColumnarRowIterator extends RecyclableIterator<InternalRow>
     }
 
     public void reset(long nextFilePos) {
-        reset(LongIterator.fromRange(nextFilePos, nextFilePos + row.batch().getNumRows()));
-    }
-
-    public void reset(LongIterator positions) {
-        this.positionIterator = positions;
         this.num = row.batch().getNumRows();
-        this.index = 0;
-        this.returnedPositionIndex = 0;
-        this.returnedPosition = -1;
+        this.nextPos = 0;
+        this.nextFilePos = nextFilePos;
     }
 
     @Nullable
     @Override
     public InternalRow next() {
-        if (index < num) {
-            row.setRowId(index++);
+        if (nextPos < num) {
+            row.setRowId(nextPos++);
+            nextFilePos++;
             return row;
         } else {
             return null;
@@ -80,15 +70,7 @@ public class ColumnarRowIterator extends RecyclableIterator<InternalRow>
 
     @Override
     public long returnedPosition() {
-        for (int i = 0; i < index - returnedPositionIndex; i++) {
-            returnedPosition = positionIterator.next();
-        }
-        returnedPositionIndex = index;
-        if (returnedPosition == -1) {
-            throw new IllegalStateException("returnedPosition() is called before next()");
-        }
-
-        return returnedPosition;
+        return nextFilePos - 1;
     }
 
     @Override
@@ -97,11 +79,9 @@ public class ColumnarRowIterator extends RecyclableIterator<InternalRow>
     }
 
     protected ColumnarRowIterator copy(ColumnVector[] vectors) {
-        // We should call copy only when the iterator is at the beginning of the file.
-        checkArgument(returnedPositionIndex == 0, "copy() should not be called after next()");
         ColumnarRowIterator newIterator =
                 new ColumnarRowIterator(filePath, row.copy(vectors), recycler);
-        newIterator.reset(positionIterator);
+        newIterator.reset(nextFilePos);
         return newIterator;
     }
 

@@ -125,9 +125,8 @@ public abstract class FormatReadWriteTest {
                 format.createReaderFactory(rowType)
                         .createReader(
                                 new FormatReaderContext(fileIO, file, fileIO.getFileSize(file)));
-        InternalRowSerializer internalRowSerializer = new InternalRowSerializer(rowType);
         List<InternalRow> result = new ArrayList<>();
-        reader.forEachRemaining(row -> result.add(internalRowSerializer.copy(row)));
+        reader.forEachRemaining(result::add);
         assertThat(result.size()).isEqualTo(1);
 
         validateFullTypesResult(result.get(0), expected);
@@ -352,52 +351,56 @@ public abstract class FormatReadWriteTest {
     }
 
     private void validateFullTypesResult(InternalRow actual, InternalRow expected) {
-        RowType rowType = rowTypeForFullTypesTest();
-        InternalRow.FieldGetter[] fieldGetters = rowType.fieldGetters();
-        for (int i = 0; i < fieldGetters.length; i++) {
-            String name = rowType.getFieldNames().get(i);
-            Object actualField = fieldGetters[i].getFieldOrNull(actual);
-            Object expectedField = fieldGetters[i].getFieldOrNull(expected);
-            switch (name) {
-                case "locations":
-                    validateInternalMap(
-                            (InternalMap) actualField,
-                            (InternalMap) expectedField,
-                            DataTypes.STRING());
-                    break;
-                case "nonStrKeyMap":
-                    validateInternalMap(
-                            (InternalMap) actualField,
-                            (InternalMap) expectedField,
-                            DataTypes.INT());
-                    break;
-                case "strArray":
-                    validateInternalArray(
-                            (InternalArray) actualField,
-                            (InternalArray) expectedField,
-                            DataTypes.STRING());
-                    break;
-                case "intArray":
-                    validateInternalArray(
-                            (InternalArray) actualField,
-                            (InternalArray) expectedField,
-                            DataTypes.INT());
-                    break;
-                case "rowArray":
-                    validateInternalArray(
-                            (InternalArray) actualField,
-                            (InternalArray) expectedField,
-                            ((ArrayType)
-                                            rowType.getFields().stream()
-                                                    .filter(f -> f.name().equals("rowArray"))
-                                                    .findAny()
-                                                    .get()
-                                                    .type())
-                                    .getElementType());
-                    break;
-                default:
-                    assertThat(actualField).isEqualTo(expectedField);
-                    break;
+        if (formatType.equals("avro")) {
+            assertThat(actual).isEqualTo(expected);
+        } else {
+            RowType rowType = rowTypeForFullTypesTest();
+            InternalRow.FieldGetter[] fieldGetters = rowType.fieldGetters();
+            for (int i = 0; i < fieldGetters.length; i++) {
+                String name = rowType.getFieldNames().get(i);
+                Object actualField = fieldGetters[i].getFieldOrNull(actual);
+                Object expectedField = fieldGetters[i].getFieldOrNull(expected);
+                switch (name) {
+                    case "locations":
+                        validateInternalMap(
+                                (InternalMap) actualField,
+                                (InternalMap) expectedField,
+                                DataTypes.STRING());
+                        break;
+                    case "nonStrKeyMap":
+                        validateInternalMap(
+                                (InternalMap) actualField,
+                                (InternalMap) expectedField,
+                                DataTypes.INT());
+                        break;
+                    case "strArray":
+                        validateInternalArray(
+                                (InternalArray) actualField,
+                                (InternalArray) expectedField,
+                                DataTypes.STRING());
+                        break;
+                    case "intArray":
+                        validateInternalArray(
+                                (InternalArray) actualField,
+                                (InternalArray) expectedField,
+                                DataTypes.INT());
+                        break;
+                    case "rowArray":
+                        validateInternalArray(
+                                (InternalArray) actualField,
+                                (InternalArray) expectedField,
+                                ((ArrayType)
+                                                rowType.getFields().stream()
+                                                        .filter(f -> f.name().equals("rowArray"))
+                                                        .findAny()
+                                                        .get()
+                                                        .type())
+                                        .getElementType());
+                        break;
+                    default:
+                        assertThat(actualField).isEqualTo(expectedField);
+                        break;
+                }
             }
         }
     }

@@ -108,7 +108,7 @@ public abstract class FlinkTableSource
                 unConsumedFilters.add(filter);
             } else {
                 Predicate p = predicateOptional.get();
-                if (isUnbounded() || !p.visit(onlyPartFieldsVisitor)) {
+                if (isStreaming() || !p.visit(onlyPartFieldsVisitor)) {
                     unConsumedFilters.add(filter);
                 } else {
                     consumedFilters.add(filter);
@@ -137,7 +137,7 @@ public abstract class FlinkTableSource
         this.limit = limit;
     }
 
-    public abstract boolean isUnbounded();
+    public abstract boolean isStreaming();
 
     @Nullable
     protected Integer inferSourceParallelism(StreamExecutionEnvironment env) {
@@ -150,7 +150,7 @@ public abstract class FlinkTableSource
         }
         Integer parallelism = options.get(FlinkConnectorOptions.SCAN_PARALLELISM);
         if (parallelism == null && options.get(FlinkConnectorOptions.INFER_SCAN_PARALLELISM)) {
-            if (isUnbounded()) {
+            if (isStreaming()) {
                 parallelism = Math.max(1, options.get(CoreOptions.BUCKET));
             } else {
                 scanSplitsForInference();

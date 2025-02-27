@@ -24,8 +24,6 @@ import org.apache.paimon.table.SpecialFields;
 import org.apache.paimon.utils.Preconditions;
 import org.apache.paimon.utils.StringUtils;
 
-import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.annotation.JsonCreator;
-import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.annotation.JsonProperty;
 import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.core.JsonGenerator;
 
 import java.io.IOException;
@@ -54,8 +52,6 @@ public final class RowType extends DataType {
 
     private static final long serialVersionUID = 1L;
 
-    private static final String FIELD_FIELDS = "fields";
-
     public static final String FORMAT = "ROW<%s>";
 
     private final List<DataField> fields;
@@ -71,8 +67,7 @@ public final class RowType extends DataType {
         validateFields(fields);
     }
 
-    @JsonCreator
-    public RowType(@JsonProperty(FIELD_FIELDS) List<DataField> fields) {
+    public RowType(List<DataField> fields) {
         this(true, fields);
     }
 

@@ -24,7 +24,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
-import java.util.stream.Collectors;
 
 /** Incremental index files. */
 public class IndexIncrement {
@@ -78,11 +77,11 @@ public class IndexIncrement {
 
     @Override
     public String toString() {
-        return String.format(
-                "IndexIncrement {newIndexFiles = %s, deletedIndexFiles = %s}",
-                newIndexFiles.stream().map(IndexFileMeta::fileName).collect(Collectors.toList()),
-                deletedIndexFiles.stream()
-                        .map(IndexFileMeta::fileName)
-                        .collect(Collectors.toList()));
+        return "IndexIncrement{"
+                + "newIndexFiles="
+                + newIndexFiles
+                + ",deletedIndexFiles="
+                + deletedIndexFiles
+                + "}";
     }
 }

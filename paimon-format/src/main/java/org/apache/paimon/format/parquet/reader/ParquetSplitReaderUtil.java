@@ -381,10 +381,12 @@ public class ParquetSplitReaderUtil {
     }
 
     public static List<ParquetField> buildFieldsList(
-            DataField[] readFields, MessageColumnIO columnIO) {
+            List<DataField> children, List<String> fieldNames, MessageColumnIO columnIO) {
         List<ParquetField> list = new ArrayList<>();
-        for (DataField readField : readFields) {
-            list.add(constructField(readField, lookupColumnByName(columnIO, readField.name())));
+        for (int i = 0; i < children.size(); i++) {
+            list.add(
+                    constructField(
+                            children.get(i), lookupColumnByName(columnIO, fieldNames.get(i))));
         }
         return list;
     }
@@ -409,12 +411,7 @@ public class ParquetSplitReaderUtil {
             }
 
             return new ParquetGroupField(
-                    type,
-                    repetitionLevel,
-                    definitionLevel,
-                    required,
-                    fieldsBuilder.build(),
-                    groupColumnIO.getFieldPath());
+                    type, repetitionLevel, definitionLevel, required, fieldsBuilder.build());
         }
 
         if (type instanceof VariantType) {
@@ -427,8 +424,7 @@ public class ParquetSplitReaderUtil {
                             new BinaryType(),
                             required,
                             value.getColumnDescriptor(),
-                            value.getId(),
-                            value.getFieldPath()));
+                            value.getId()));
             PrimitiveColumnIO metadata =
                     (PrimitiveColumnIO) lookupColumnByName(groupColumnIO, Variant.METADATA);
             fieldsBuilder.add(
@@ -436,15 +432,9 @@ public class ParquetSplitReaderUtil {
                             new BinaryType(),
                             required,
                             metadata.getColumnDescriptor(),
-                            metadata.getId(),
-                            metadata.getFieldPath()));
+                            metadata.getId()));
             return new ParquetGroupField(
-                    type,
-                    repetitionLevel,
-                    definitionLevel,
-                    required,
-                    fieldsBuilder.build(),
-                    groupColumnIO.getFieldPath());
+                    type, repetitionLevel, definitionLevel, required, fieldsBuilder.build());
         }
 
         if (type instanceof MapType) {
@@ -464,8 +454,7 @@ public class ParquetSplitReaderUtil {
                     repetitionLevel,
                     definitionLevel,
                     required,
-                    ImmutableList.of(keyField, valueField),
-                    groupColumnIO.getFieldPath());
+                    ImmutableList.of(keyField, valueField));
         }
 
         if (type instanceof MultisetType) {
@@ -484,8 +473,7 @@ public class ParquetSplitReaderUtil {
                     repetitionLevel,
                     definitionLevel,
                     required,
-                    ImmutableList.of(keyField, valueField),
-                    groupColumnIO.getFieldPath());
+                    ImmutableList.of(keyField, valueField));
         }
 
         if (type instanceof ArrayType) {
@@ -519,21 +507,12 @@ public class ParquetSplitReaderUtil {
                 repetitionLevel = columnIO.getParent().getRepetitionLevel();
             }
             return new ParquetGroupField(
-                    type,
-                    repetitionLevel,
-                    definitionLevel,
-                    required,
-                    ImmutableList.of(field),
-                    columnIO.getFieldPath());
+                    type, repetitionLevel, definitionLevel, required, ImmutableList.of(field));
         }
 
         PrimitiveColumnIO primitiveColumnIO = (PrimitiveColumnIO) columnIO;
         return new ParquetPrimitiveField(
-                type,
-                required,
-                primitiveColumnIO.getColumnDescriptor(),
-                primitiveColumnIO.getId(),
-                primitiveColumnIO.getFieldPath());
+                type, required, primitiveColumnIO.getColumnDescriptor(), primitiveColumnIO.getId());
     }
 
     /**

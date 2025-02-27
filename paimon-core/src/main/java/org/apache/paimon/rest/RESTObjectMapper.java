@@ -34,9 +34,7 @@ import static org.apache.paimon.utils.JsonSerdeUtil.registerJsonObjects;
 /** Object mapper for REST request and response. */
 public class RESTObjectMapper {
 
-    public static final ObjectMapper OBJECT_MAPPER = RESTObjectMapper.create();
-
-    private static ObjectMapper create() {
+    public static ObjectMapper create() {
         ObjectMapper mapper = new ObjectMapper();
         mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         mapper.configure(SerializationFeature.FAIL_ON_EMPTY_BEANS, false);
@@ -45,7 +43,7 @@ public class RESTObjectMapper {
         return mapper;
     }
 
-    private static Module createPaimonRestJacksonModule() {
+    public static Module createPaimonRestJacksonModule() {
         SimpleModule module = new SimpleModule("Paimon_REST");
         registerJsonObjects(
                 module,

@@ -18,12 +18,16 @@
 
 package org.apache.paimon.rest;
 
-import org.apache.paimon.rest.auth.AuthProvider;
-import org.apache.paimon.rest.auth.BearTokenAuthProvider;
+import org.apache.paimon.rest.auth.BearTokenCredentialsProvider;
+import org.apache.paimon.rest.auth.CredentialsProvider;
 import org.apache.paimon.rest.exceptions.BadRequestException;
 import org.apache.paimon.rest.responses.ErrorResponse;
 import org.apache.paimon.rest.responses.ErrorResponseResourceType;
 
+import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
+
+import okhttp3.mockwebserver.MockResponse;
+import okhttp3.mockwebserver.MockWebServer;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -41,48 +45,50 @@ public class HttpClientTest {
 
     private static final String MOCK_PATH = "/v1/api/mock";
     private static final String TOKEN = "token";
+    private static final ObjectMapper OBJECT_MAPPER = RESTObjectMapper.create();
 
-    private TestHttpWebServer server;
+    private MockWebServer mockWebServer;
     private HttpClient httpClient;
     private ErrorHandler errorHandler;
     private MockRESTData mockResponseData;
     private String mockResponseDataStr;
+    private ErrorResponse errorResponse;
     private String errorResponseStr;
     private Map<String, String> headers;
 
     @Before
-    public void setUp() throws Exception {
-        server = new TestHttpWebServer(MOCK_PATH);
-        server.start();
+    public void setUp() throws IOException {
+        mockWebServer = new MockWebServer();
+        mockWebServer.start();
+        String baseUrl = mockWebServer.url("").toString();
         errorHandler = DefaultErrorHandler.getInstance();
         HttpClientOptions httpClientOptions =
-                new HttpClientOptions(server.getBaseUrl(), Duration.ofSeconds(3), 1, 10, 2);
+                new HttpClientOptions(baseUrl, Duration.ofSeconds(3), Duration.ofSeconds(3), 1);
         mockResponseData = new MockRESTData(MOCK_PATH);
-        mockResponseDataStr = server.createResponseBody(mockResponseData);
-        errorResponseStr =
-                server.createResponseBody(
-                        new ErrorResponse(ErrorResponseResourceType.DATABASE, "test", "test", 400));
+        mockResponseDataStr = OBJECT_MAPPER.writeValueAsString(mockResponseData);
+        errorResponse = new ErrorResponse(ErrorResponseResourceType.DATABASE, "test", "test", 400);
+        errorResponseStr = OBJECT_MAPPER.writeValueAsString(errorResponse);
         httpClient = new HttpClient(httpClientOptions);
         httpClient.setErrorHandler(errorHandler);
-        AuthProvider authProvider = new BearTokenAuthProvider(TOKEN);
-        headers = authProvider.authHeader();
+        CredentialsProvider credentialsProvider = new BearTokenCredentialsProvider(TOKEN);
+        headers = credentialsProvider.authHeader();
     }
 
     @After
     public void tearDown() throws IOException {
-        server.stop();
+        mockWebServer.shutdown();
     }
 
     @Test
     public void testGetSuccess() {
-        server.enqueueResponse(mockResponseDataStr, 200);
+        mockHttpCallWithCode(mockResponseDataStr, 200);
         MockRESTData response = httpClient.get(MOCK_PATH, MockRESTData.class, headers);
         assertEquals(mockResponseData.data(), response.data());
     }
 
     @Test
     public void testGetFail() {
-        server.enqueueResponse(errorResponseStr, 400);
+        mockHttpCallWithCode(errorResponseStr, 400);
         assertThrows(
                 BadRequestException.class,
                 () -> httpClient.get(MOCK_PATH, MockRESTData.class, headers));
@@ -90,7 +96,7 @@ public class HttpClientTest {
 
     @Test
     public void testPostSuccess() {
-        server.enqueueResponse(mockResponseDataStr, 200);
+        mockHttpCallWithCode(mockResponseDataStr, 200);
         MockRESTData response =
                 httpClient.post(MOCK_PATH, mockResponseData, MockRESTData.class, headers);
         assertEquals(mockResponseData.data(), response.data());
@@ -98,7 +104,7 @@ public class HttpClientTest {
 
     @Test
     public void testPostFail() {
-        server.enqueueResponse(errorResponseStr, 400);
+        mockHttpCallWithCode(errorResponseStr, 400);
         assertThrows(
                 BadRequestException.class,
                 () -> httpClient.post(MOCK_PATH, mockResponseData, ErrorResponse.class, headers));
@@ -106,24 +112,25 @@ public class HttpClientTest {
 
     @Test
     public void testDeleteSuccess() {
-        server.enqueueResponse(mockResponseDataStr, 200);
+        mockHttpCallWithCode(mockResponseDataStr, 200);
         assertDoesNotThrow(() -> httpClient.delete(MOCK_PATH, headers));
     }
 
     @Test
     public void testDeleteFail() {
-        server.enqueueResponse(errorResponseStr, 400);
+        mockHttpCallWithCode(errorResponseStr, 400);
         assertThrows(BadRequestException.class, () -> httpClient.delete(MOCK_PATH, headers));
     }
 
-    @Test
-    public void testRetry() {
-        HttpClient httpClient =
-                new HttpClient(
-                        new HttpClientOptions(
-                                server.getBaseUrl(), Duration.ofSeconds(30), 1, 10, 2));
-        server.enqueueResponse(mockResponseDataStr, 429);
-        server.enqueueResponse(mockResponseDataStr, 200);
-        assertDoesNotThrow(() -> httpClient.get(MOCK_PATH, MockRESTData.class, headers));
+    private void mockHttpCallWithCode(String body, Integer code) {
+        MockResponse mockResponseObj = generateMockResponse(body, code);
+        mockWebServer.enqueue(mockResponseObj);
+    }
+
+    private MockResponse generateMockResponse(String data, Integer code) {
+        return new MockResponse()
+                .setResponseCode(code)
+                .setBody(data)
+                .addHeader("Content-Type", "application/json");
     }
 }

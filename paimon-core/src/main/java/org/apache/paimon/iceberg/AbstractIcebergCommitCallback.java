@@ -41,7 +41,6 @@ import org.apache.paimon.iceberg.metadata.IcebergSchema;
 import org.apache.paimon.iceberg.metadata.IcebergSnapshot;
 import org.apache.paimon.iceberg.metadata.IcebergSnapshotSummary;
 import org.apache.paimon.io.DataFileMeta;
-import org.apache.paimon.io.DataFilePathFactory;
 import org.apache.paimon.manifest.ManifestCommittable;
 import org.apache.paimon.manifest.ManifestEntry;
 import org.apache.paimon.options.Options;
@@ -55,7 +54,6 @@ import org.apache.paimon.table.source.ScanMode;
 import org.apache.paimon.table.source.snapshot.SnapshotReader;
 import org.apache.paimon.types.DataType;
 import org.apache.paimon.types.RowType;
-import org.apache.paimon.utils.DataFilePathFactories;
 import org.apache.paimon.utils.FileStorePathFactory;
 import org.apache.paimon.utils.ManifestReadThreadPool;
 import org.apache.paimon.utils.Pair;
@@ -448,11 +446,11 @@ public abstract class AbstractIcebergCommitCallback implements CommitCallback {
             Map<String, BinaryRow> removedFiles,
             Map<String, Pair<BinaryRow, DataFileMeta>> addedFiles) {
         boolean isAddOnly = true;
-        DataFilePathFactories factories = new DataFilePathFactories(fileStorePathFactory);
         for (ManifestEntry entry : manifestEntries) {
-            DataFilePathFactory dataFilePathFactory =
-                    factories.get(entry.partition(), entry.bucket());
-            String path = dataFilePathFactory.toPath(entry).toString();
+            String path =
+                    fileStorePathFactory.bucketPath(entry.partition(), entry.bucket())
+                            + "/"
+                            + entry.fileName();
             switch (entry.kind()) {
                 case ADD:
                     if (shouldAddFileToIceberg(entry.file())) {

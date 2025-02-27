@@ -25,8 +25,6 @@ import org.apache.paimon.data.InternalRow;
 import org.apache.paimon.mergetree.compact.MergeFunction;
 import org.apache.paimon.mergetree.compact.MergeFunctionFactory;
 import org.apache.paimon.mergetree.compact.aggregate.factory.FieldAggregatorFactory;
-import org.apache.paimon.mergetree.compact.aggregate.factory.FieldLastNonNullValueAggFactory;
-import org.apache.paimon.mergetree.compact.aggregate.factory.FieldPrimaryKeyAggFactory;
 import org.apache.paimon.options.Options;
 import org.apache.paimon.types.DataType;
 import org.apache.paimon.types.RowKind;
@@ -134,39 +132,27 @@ public class AggregateMergeFunction implements MergeFunction<KeyValue> {
             }
 
             FieldAggregator[] fieldAggregators = new FieldAggregator[fieldNames.size()];
-            List<String> sequenceFields = options.sequenceField();
+            String defaultAggFunc = options.fieldsDefaultFunc();
             for (int i = 0; i < fieldNames.size(); i++) {
                 String fieldName = fieldNames.get(i);
                 DataType fieldType = fieldTypes.get(i);
+                // aggregate by primary keys, so they do not aggregate
+                boolean isPrimaryKey = primaryKeys.contains(fieldName);
+                String strAggFunc = options.fieldAggFunc(fieldName);
+                strAggFunc = strAggFunc == null ? defaultAggFunc : strAggFunc;
 
-                String aggFuncName = getAggFuncName(fieldName, sequenceFields);
+                boolean ignoreRetract = options.fieldAggIgnoreRetract(fieldName);
                 fieldAggregators[i] =
-                        FieldAggregatorFactory.create(fieldType, fieldName, aggFuncName, options);
+                        FieldAggregatorFactory.create(
+                                fieldType,
+                                strAggFunc,
+                                ignoreRetract,
+                                isPrimaryKey,
+                                options,
+                                fieldName);
             }
 
             return new AggregateMergeFunction(createFieldGetters(fieldTypes), fieldAggregators);
-        }
-
-        private String getAggFuncName(String fieldName, List<String> sequenceFields) {
-            if (sequenceFields.contains(fieldName)) {
-                // no agg for sequence fields, use last_non_null_value to do cover
-                return FieldLastNonNullValueAggFactory.NAME;
-            }
-
-            if (primaryKeys.contains(fieldName)) {
-                // aggregate by primary keys, so they do not aggregate
-                return FieldPrimaryKeyAggFactory.NAME;
-            }
-
-            String aggFuncName = options.fieldAggFunc(fieldName);
-            if (aggFuncName == null) {
-                aggFuncName = options.fieldsDefaultFunc();
-            }
-            if (aggFuncName == null) {
-                // final default agg func
-                aggFuncName = FieldLastNonNullValueAggFactory.NAME;
-            }
-            return aggFuncName;
         }
     }
 }

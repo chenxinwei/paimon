@@ -21,10 +21,10 @@ package org.apache.paimon.operation;
 import org.apache.paimon.CoreOptions;
 import org.apache.paimon.Snapshot;
 import org.apache.paimon.annotation.VisibleForTesting;
-import org.apache.paimon.catalog.SnapshotCommit;
 import org.apache.paimon.data.BinaryRow;
 import org.apache.paimon.data.InternalRow;
 import org.apache.paimon.fs.FileIO;
+import org.apache.paimon.fs.Path;
 import org.apache.paimon.io.DataFileMeta;
 import org.apache.paimon.io.DataFilePathFactory;
 import org.apache.paimon.manifest.FileEntry;
@@ -52,7 +52,6 @@ import org.apache.paimon.table.sink.CommitMessage;
 import org.apache.paimon.table.sink.CommitMessageImpl;
 import org.apache.paimon.table.source.ScanMode;
 import org.apache.paimon.types.RowType;
-import org.apache.paimon.utils.DataFilePathFactories;
 import org.apache.paimon.utils.FileStorePathFactory;
 import org.apache.paimon.utils.IOUtils;
 import org.apache.paimon.utils.Pair;
@@ -76,6 +75,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
 
 import static org.apache.paimon.deletionvectors.DeletionVectorsIndexFile.DELETION_VECTORS_INDEX;
@@ -85,6 +85,7 @@ import static org.apache.paimon.manifest.ManifestEntry.recordCountAdd;
 import static org.apache.paimon.manifest.ManifestEntry.recordCountDelete;
 import static org.apache.paimon.partition.PartitionPredicate.createBinaryPartitions;
 import static org.apache.paimon.partition.PartitionPredicate.createPartitionPredicate;
+import static org.apache.paimon.utils.BranchManager.DEFAULT_MAIN_BRANCH;
 import static org.apache.paimon.utils.InternalRowPartitionComputer.partToSimpleString;
 
 /**
@@ -93,12 +94,12 @@ import static org.apache.paimon.utils.InternalRowPartitionComputer.partToSimpleS
  * <p>This class provides an atomic commit method to the user.
  *
  * <ol>
- *   <li>Before calling {@link #commit(ManifestCommittable, Map)}, if user cannot determine if this
- *       commit is done before, user should first call {@link #filterCommitted}.
+ *   <li>Before calling {@link FileStoreCommitImpl#commit}, if user cannot determine if this commit
+ *       is done before, user should first call {@link FileStoreCommitImpl#filterCommitted}.
  *   <li>Before committing, it will first check for conflicts by checking if all files to be removed
  *       currently exists, and if modified files have overlapping key ranges with existing files.
- *   <li>After that it use the external {@link SnapshotCommit} (if provided) or the atomic rename of
- *       the file system to ensure atomicity.
+ *   <li>After that it use the external {@link FileStoreCommitImpl#lock} (if provided) or the atomic
+ *       rename of the file system to ensure atomicity.
  *   <li>If commit fails due to conflicts or exception it tries its best to clean up and aborts.
  *   <li>If atomic rename fails it tries again after reading the latest snapshot from step 2.
  * </ol>
@@ -111,7 +112,6 @@ public class FileStoreCommitImpl implements FileStoreCommit {
 
     private static final Logger LOG = LoggerFactory.getLogger(FileStoreCommitImpl.class);
 
-    private final SnapshotCommit snapshotCommit;
     private final FileIO fileIO;
     private final SchemaManager schemaManager;
     private final String tableName;
@@ -135,15 +135,15 @@ public class FileStoreCommitImpl implements FileStoreCommit {
     private final List<CommitCallback> commitCallbacks;
     private final StatsFileHandler statsFileHandler;
     private final BucketMode bucketMode;
-    private final long commitTimeout;
+    private long commitTimeout;
     private final int commitMaxRetries;
 
+    @Nullable private Lock lock;
     private boolean ignoreEmptyCommit;
     private CommitMetrics commitMetrics;
     @Nullable private PartitionExpire partitionExpire;
 
     public FileStoreCommitImpl(
-            SnapshotCommit snapshotCommit,
             FileIO fileIO,
             SchemaManager schemaManager,
             String tableName,
@@ -170,7 +170,6 @@ public class FileStoreCommitImpl implements FileStoreCommit {
             List<CommitCallback> commitCallbacks,
             int commitMaxRetries,
             long commitTimeout) {
-        this.snapshotCommit = snapshotCommit;
         this.fileIO = fileIO;
         this.schemaManager = schemaManager;
         this.tableName = tableName;
@@ -199,10 +198,17 @@ public class FileStoreCommitImpl implements FileStoreCommit {
         this.commitMaxRetries = commitMaxRetries;
         this.commitTimeout = commitTimeout;
 
+        this.lock = null;
         this.ignoreEmptyCommit = true;
         this.commitMetrics = null;
         this.statsFileHandler = statsFileHandler;
         this.bucketMode = bucketMode;
+    }
+
+    @Override
+    public FileStoreCommit withLock(Lock lock) {
+        this.lock = lock;
+        return this;
     }
 
     @Override
@@ -571,9 +577,14 @@ public class FileStoreCommitImpl implements FileStoreCommit {
 
     @Override
     public void abort(List<CommitMessage> commitMessages) {
-        DataFilePathFactories factories = new DataFilePathFactories(pathFactory);
+        Map<Pair<BinaryRow, Integer>, DataFilePathFactory> factoryMap = new HashMap<>();
         for (CommitMessage message : commitMessages) {
-            DataFilePathFactory pathFactory = factories.get(message.partition(), message.bucket());
+            DataFilePathFactory pathFactory =
+                    factoryMap.computeIfAbsent(
+                            Pair.of(message.partition(), message.bucket()),
+                            k ->
+                                    this.pathFactory.createDataFilePathFactory(
+                                            k.getKey(), k.getValue()));
             CommitMessageImpl commitMessage = (CommitMessageImpl) message;
             List<DataFileMeta> toDelete = new ArrayList<>();
             toDelete.addAll(commitMessage.newFilesIncrement().newFiles());
@@ -835,6 +846,10 @@ public class FileStoreCommitImpl implements FileStoreCommit {
         long startMillis = System.currentTimeMillis();
         long newSnapshotId =
                 latestSnapshot == null ? Snapshot.FIRST_SNAPSHOT_ID : latestSnapshot.id() + 1;
+        Path newSnapshotPath =
+                branchName.equals(DEFAULT_MAIN_BRANCH)
+                        ? snapshotManager.snapshotPath(newSnapshotId)
+                        : snapshotManager.copyWithBranch(branchName).snapshotPath(newSnapshotId);
 
         if (LOG.isDebugEnabled()) {
             LOG.debug("Ready to commit table files to snapshot {}", newSnapshotId);
@@ -1001,19 +1016,27 @@ public class FileStoreCommitImpl implements FileStoreCommit {
             cleanUpNoReuseTmpManifests(baseManifestList, mergeBeforeManifests, mergeAfterManifests);
             throw new RuntimeException(
                     String.format(
-                            "Exception occurs when preparing snapshot #%d by user %s "
+                            "Exception occurs when preparing snapshot #%d (path %s) by user %s "
                                     + "with hash %s and kind %s. Clean up.",
-                            newSnapshotId, commitUser, identifier, commitKind.name()),
+                            newSnapshotId,
+                            newSnapshotPath.toString(),
+                            commitUser,
+                            identifier,
+                            commitKind.name()),
                     e);
         }
 
-        if (commitSnapshotImpl(newSnapshot)) {
+        if (commitSnapshotImpl(newSnapshot, newSnapshotPath)) {
             if (LOG.isDebugEnabled()) {
                 LOG.debug(
                         String.format(
-                                "Successfully commit snapshot #%d by user %s "
+                                "Successfully commit snapshot #%d (path %s) by user %s "
                                         + "with identifier %s and kind %s.",
-                                newSnapshotId, commitUser, identifier, commitKind.name()));
+                                newSnapshotId,
+                                newSnapshotPath,
+                                commitUser,
+                                identifier,
+                                commitKind.name()));
             }
             commitCallbacks.forEach(callback -> callback.call(deltaFiles, newSnapshot));
             return new SuccessResult();
@@ -1023,10 +1046,15 @@ public class FileStoreCommitImpl implements FileStoreCommit {
         long commitTime = (System.currentTimeMillis() - startMillis) / 1000;
         LOG.warn(
                 String.format(
-                        "Atomic commit failed for snapshot #%d by user %s "
+                        "Atomic commit failed for snapshot #%d (path %s) by user %s "
                                 + "with identifier %s and kind %s after %s seconds. "
                                 + "Clean up and try again.",
-                        newSnapshotId, commitUser, identifier, commitKind.name(), commitTime));
+                        newSnapshotId,
+                        newSnapshotPath,
+                        commitUser,
+                        identifier,
+                        commitKind.name(),
+                        commitTime));
         cleanUpNoReuseTmpManifests(baseManifestList, mergeBeforeManifests, mergeAfterManifests);
         return new RetryResult(
                 deltaManifestList,
@@ -1135,7 +1163,12 @@ public class FileStoreCommitImpl implements FileStoreCommit {
                         latestSnapshot.watermark(),
                         latestSnapshot.statistics());
 
-        if (!commitSnapshotImpl(newSnapshot)) {
+        Path newSnapshotPath =
+                branchName.equals(DEFAULT_MAIN_BRANCH)
+                        ? snapshotManager.snapshotPath(newSnapshot.id())
+                        : snapshotManager.copyWithBranch(branchName).snapshotPath(newSnapshot.id());
+
+        if (!commitSnapshotImpl(newSnapshot, newSnapshotPath)) {
             return new ManifestCompactResult(
                     baseManifestList, deltaManifestList, mergeBeforeManifests, mergeAfterManifests);
         } else {
@@ -1143,18 +1176,39 @@ public class FileStoreCommitImpl implements FileStoreCommit {
         }
     }
 
-    private boolean commitSnapshotImpl(Snapshot newSnapshot) {
+    private boolean commitSnapshotImpl(Snapshot newSnapshot, Path newSnapshotPath) {
         try {
-            return snapshotCommit.commit(newSnapshot, branchName);
+            Callable<Boolean> callable =
+                    () -> {
+                        boolean committed =
+                                fileIO.tryToWriteAtomic(newSnapshotPath, newSnapshot.toJson());
+                        if (committed) {
+                            snapshotManager.commitLatestHint(newSnapshot.id());
+                        }
+                        return committed;
+                    };
+            if (lock != null) {
+                return lock.runWithLock(
+                        () ->
+                                // fs.rename may not returns false if target file
+                                // already exists, or even not atomic
+                                // as we're relying on external locking, we can first
+                                // check if file exist then rename to work around this
+                                // case
+                                !fileIO.exists(newSnapshotPath) && callable.call());
+            } else {
+                return callable.call();
+            }
         } catch (Throwable e) {
             // exception when performing the atomic rename,
             // we cannot clean up because we can't determine the success
             throw new RuntimeException(
                     String.format(
-                            "Exception occurs when committing snapshot #%d by user %s "
+                            "Exception occurs when committing snapshot #%d (path %s) by user %s "
                                     + "with identifier %s and kind %s. "
                                     + "Cannot clean up because we can't determine the success.",
                             newSnapshot.id(),
+                            newSnapshotPath,
                             commitUser,
                             newSnapshot.commitIdentifier(),
                             newSnapshot.commitKind().name()),
@@ -1451,7 +1505,6 @@ public class FileStoreCommitImpl implements FileStoreCommit {
         for (CommitCallback callback : commitCallbacks) {
             IOUtils.closeQuietly(callback);
         }
-        IOUtils.closeQuietly(snapshotCommit);
     }
 
     private static class LevelIdentifier {

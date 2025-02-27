@@ -164,8 +164,7 @@ public abstract class IcebergHiveMetadataCommitterITCaseBase {
         tEnv.executeSql("CREATE DATABASE my_paimon.test_db");
         tEnv.executeSql(
                 "CREATE TABLE my_paimon.test_db.t ( pt INT, id INT, data STRING ) PARTITIONED BY (pt) WITH "
-                        + "( 'metadata.iceberg.storage' = 'hive-catalog', 'metadata.iceberg.uri' = '', 'file.format' = 'avro',"
-                        + " 'metadata.iceberg.glue.skip-archive' = 'true' )");
+                        + "( 'metadata.iceberg.storage' = 'hive-catalog', 'metadata.iceberg.uri' = '', 'file.format' = 'avro' )");
         tEnv.executeSql(
                         "INSERT INTO my_paimon.test_db.t VALUES "
                                 + "(1, 1, 'apple'), (1, 2, 'pear'), (2, 1, 'cat'), (2, 2, 'dog')")

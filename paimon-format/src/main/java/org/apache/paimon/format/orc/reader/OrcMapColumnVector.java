@@ -52,7 +52,12 @@ public class OrcMapColumnVector extends AbstractOrcColumnVector
     }
 
     @Override
-    public ColumnVector[] getChildren() {
-        return new ColumnVector[] {keyPaimonVector, valuePaimonVector};
+    public ColumnVector getKeyColumnVector() {
+        return keyPaimonVector;
+    }
+
+    @Override
+    public ColumnVector getValueColumnVector() {
+        return valuePaimonVector;
     }
 }

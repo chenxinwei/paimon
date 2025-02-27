@@ -45,10 +45,12 @@ public class ParquetDecimalVector
                 WritableBytesVector,
                 ElementCountable {
 
-    private final WritableColumnVector vector;
+    private final ColumnVector vector;
+    private final int len;
 
-    public ParquetDecimalVector(WritableColumnVector vector) {
+    public ParquetDecimalVector(ColumnVector vector, int len) {
         this.vector = vector;
+        this.len = len;
     }
 
     @Override
@@ -79,73 +81,62 @@ public class ParquetDecimalVector
     }
 
     @Override
-    public int getCapacity() {
-        return vector.getCapacity();
-    }
-
-    @Override
     public void reset() {
-        vector.reset();
+        if (vector instanceof WritableColumnVector) {
+            ((WritableColumnVector) vector).reset();
+        }
     }
 
     @Override
     public void setNullAt(int rowId) {
-        vector.setNullAt(rowId);
+        if (vector instanceof WritableColumnVector) {
+            ((WritableColumnVector) vector).setNullAt(rowId);
+        }
     }
 
     @Override
     public void setNulls(int rowId, int count) {
-        vector.setNulls(rowId, count);
+        if (vector instanceof WritableColumnVector) {
+            ((WritableColumnVector) vector).setNulls(rowId, count);
+        }
     }
 
     @Override
     public void fillWithNulls() {
-        vector.fillWithNulls();
+        if (vector instanceof WritableColumnVector) {
+            ((WritableColumnVector) vector).fillWithNulls();
+        }
     }
 
     @Override
     public void setDictionary(Dictionary dictionary) {
-        vector.setDictionary(dictionary);
+        if (vector instanceof WritableColumnVector) {
+            ((WritableColumnVector) vector).setDictionary(dictionary);
+        }
     }
 
     @Override
     public boolean hasDictionary() {
-        return vector.hasDictionary();
+        if (vector instanceof WritableColumnVector) {
+            return ((WritableColumnVector) vector).hasDictionary();
+        }
+        return false;
     }
 
     @Override
     public WritableIntVector reserveDictionaryIds(int capacity) {
-        return vector.reserveDictionaryIds(capacity);
+        if (vector instanceof WritableColumnVector) {
+            return ((WritableColumnVector) vector).reserveDictionaryIds(capacity);
+        }
+        throw new RuntimeException("Child vector must be instance of WritableColumnVector");
     }
 
     @Override
     public WritableIntVector getDictionaryIds() {
-        return vector.getDictionaryIds();
-    }
-
-    @Override
-    public void setAllNull() {
-        vector.setAllNull();
-    }
-
-    @Override
-    public boolean isAllNull() {
-        return vector.isAllNull();
-    }
-
-    @Override
-    public void reserve(int capacity) {
-        vector.reserve(capacity);
-    }
-
-    @Override
-    public int getElementsAppended() {
-        return vector.getElementsAppended();
-    }
-
-    @Override
-    public void addElementsAppended(int num) {
-        vector.addElementsAppended(num);
+        if (vector instanceof WritableColumnVector) {
+            return ((WritableColumnVector) vector).getDictionaryIds();
+        }
+        throw new RuntimeException("Child vector must be instance of WritableColumnVector");
     }
 
     @Override
@@ -157,9 +148,9 @@ public class ParquetDecimalVector
     }
 
     @Override
-    public void putByteArray(int rowId, byte[] value, int offset, int length) {
+    public void appendBytes(int rowId, byte[] value, int offset, int length) {
         if (vector instanceof WritableBytesVector) {
-            ((WritableBytesVector) vector).putByteArray(rowId, value, offset, length);
+            ((WritableBytesVector) vector).appendBytes(rowId, value, offset, length);
         }
     }
 
@@ -214,20 +205,6 @@ public class ParquetDecimalVector
     }
 
     @Override
-    public void appendInt(int v) {
-        if (vector instanceof WritableIntVector) {
-            ((WritableIntVector) vector).appendInt(v);
-        }
-    }
-
-    @Override
-    public void appendInts(int count, int v) {
-        if (vector instanceof WritableIntVector) {
-            ((WritableIntVector) vector).appendInts(count, v);
-        }
-    }
-
-    @Override
     public long getLong(int i) {
         if (vector instanceof WritableLongVector) {
             return ((WritableLongVector) vector).getLong(i);
@@ -254,5 +231,10 @@ public class ParquetDecimalVector
         if (vector instanceof WritableLongVector) {
             ((WritableLongVector) vector).fill(value);
         }
+    }
+
+    @Override
+    public int getLen() {
+        return len;
     }
 }

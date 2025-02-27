@@ -252,7 +252,7 @@ public class ExpireSnapshotsImpl implements ExpireSnapshots {
             if (expireConfig.isChangelogDecoupled()) {
                 commitChangelog(new Changelog(snapshot));
             }
-            snapshotManager.deleteSnapshot(id);
+            snapshotManager.fileIO().deleteQuietly(snapshotManager.snapshotPath(id));
         }
 
         writeEarliestHint(endExclusiveId);

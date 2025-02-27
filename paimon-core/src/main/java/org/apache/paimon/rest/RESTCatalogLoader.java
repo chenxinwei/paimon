@@ -18,26 +18,26 @@
 
 package org.apache.paimon.rest;
 
-import org.apache.paimon.catalog.CatalogContext;
+import org.apache.paimon.catalog.Catalog;
 import org.apache.paimon.catalog.CatalogLoader;
+import org.apache.paimon.fs.FileIO;
+import org.apache.paimon.options.Options;
 
 /** Loader to create {@link RESTCatalog}. */
 public class RESTCatalogLoader implements CatalogLoader {
 
     private static final long serialVersionUID = 1L;
 
-    private final CatalogContext context;
+    private final Options options;
+    private final FileIO fileIO;
 
-    public RESTCatalogLoader(CatalogContext context) {
-        this.context = context;
-    }
-
-    public CatalogContext context() {
-        return context;
+    public RESTCatalogLoader(Options options, FileIO fileIO) {
+        this.options = options;
+        this.fileIO = fileIO;
     }
 
     @Override
-    public RESTCatalog load() {
-        return new RESTCatalog(context, false);
+    public Catalog load() {
+        return new RESTCatalog(options, fileIO);
     }
 }

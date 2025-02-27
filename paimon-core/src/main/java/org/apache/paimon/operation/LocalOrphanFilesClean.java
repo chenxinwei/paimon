@@ -27,6 +27,7 @@ import org.apache.paimon.manifest.ManifestFile;
 import org.apache.paimon.table.FileStoreTable;
 import org.apache.paimon.table.Table;
 import org.apache.paimon.utils.Pair;
+import org.apache.paimon.utils.SerializableConsumer;
 
 import javax.annotation.Nullable;
 
@@ -51,7 +52,6 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-import static org.apache.paimon.utils.FileStorePathFactory.BUCKET_PATH_PREFIX;
 import static org.apache.paimon.utils.Preconditions.checkArgument;
 import static org.apache.paimon.utils.ThreadPoolUtils.createCachedThreadPool;
 import static org.apache.paimon.utils.ThreadPoolUtils.randomlyExecuteSequentialReturn;
@@ -69,8 +69,6 @@ public class LocalOrphanFilesClean extends OrphanFilesClean {
 
     private final List<Path> deleteFiles;
 
-    private final boolean dryRun;
-
     private final AtomicLong deletedFilesLenInBytes = new AtomicLong(0);
 
     private Set<String> candidateDeletes;
@@ -80,16 +78,16 @@ public class LocalOrphanFilesClean extends OrphanFilesClean {
     }
 
     public LocalOrphanFilesClean(FileStoreTable table, long olderThanMillis) {
-        this(table, olderThanMillis, false);
+        this(table, olderThanMillis, path -> table.fileIO().deleteQuietly(path));
     }
 
-    public LocalOrphanFilesClean(FileStoreTable table, long olderThanMillis, boolean dryRun) {
-        super(table, olderThanMillis, dryRun);
+    public LocalOrphanFilesClean(
+            FileStoreTable table, long olderThanMillis, SerializableConsumer<Path> fileCleaner) {
+        super(table, olderThanMillis, fileCleaner);
         this.deleteFiles = new ArrayList<>();
         this.executor =
                 createCachedThreadPool(
                         table.coreOptions().deleteFileThreadNum(), "ORPHAN_FILES_CLEAN");
-        this.dryRun = dryRun;
     }
 
     public CleanOrphanFilesResult clean()
@@ -99,7 +97,7 @@ public class LocalOrphanFilesClean extends OrphanFilesClean {
         // specially handle to clear snapshot dir
         cleanSnapshotDir(branches, deleteFiles::add, deletedFilesLenInBytes::addAndGet);
 
-        // get candidate files
+        // delete candidate files
         Map<String, Pair<Path, Long>> candidates = getCandidateDeletingFiles();
         if (candidates.isEmpty()) {
             return new CleanOrphanFilesResult(
@@ -120,7 +118,7 @@ public class LocalOrphanFilesClean extends OrphanFilesClean {
                 .forEach(
                         deleteFileInfo -> {
                             deletedFilesLenInBytes.addAndGet(deleteFileInfo.getRight());
-                            cleanFile(deleteFileInfo.getLeft());
+                            fileCleaner.accept(deleteFileInfo.getLeft());
                         });
         deleteFiles.addAll(
                 candidateDeletes.stream()
@@ -129,30 +127,8 @@ public class LocalOrphanFilesClean extends OrphanFilesClean {
                         .collect(Collectors.toList()));
         candidateDeletes.clear();
 
-        // clean empty directory
-        if (!dryRun) {
-            cleanEmptyDataDirectory(deleteFiles);
-        }
-
         return new CleanOrphanFilesResult(
                 deleteFiles.size(), deletedFilesLenInBytes.get(), deleteFiles);
-    }
-
-    private void cleanEmptyDataDirectory(List<Path> deleteFiles) {
-        if (deleteFiles.isEmpty()) {
-            return;
-        }
-        Set<Path> bucketDirs =
-                deleteFiles.stream()
-                        .map(Path::getParent)
-                        .filter(path -> path.toUri().toString().contains(BUCKET_PATH_PREFIX))
-                        .collect(Collectors.toSet());
-        randomlyOnlyExecute(executor, this::tryDeleteEmptyDirectory, bucketDirs);
-
-        // Clean partition directory individually to avoiding conflicts
-        Set<Path> partitionDirs =
-                bucketDirs.stream().map(Path::getParent).collect(Collectors.toSet());
-        tryCleanDataDirectory(partitionDirs, partitionKeysNum);
     }
 
     private void collectWithoutDataFile(
@@ -234,8 +210,8 @@ public class LocalOrphanFilesClean extends OrphanFilesClean {
             String databaseName,
             @Nullable String tableName,
             long olderThanMillis,
-            @Nullable Integer parallelism,
-            boolean dryRun)
+            SerializableConsumer<Path> fileCleaner,
+            @Nullable Integer parallelism)
             throws Catalog.DatabaseNotExistException, Catalog.TableNotExistException {
         List<String> tableNames = Collections.singletonList(tableName);
         if (tableName == null || "*".equals(tableName)) {
@@ -263,7 +239,8 @@ public class LocalOrphanFilesClean extends OrphanFilesClean {
                     table.getClass().getName());
 
             orphanFilesCleans.add(
-                    new LocalOrphanFilesClean((FileStoreTable) table, olderThanMillis, dryRun));
+                    new LocalOrphanFilesClean(
+                            (FileStoreTable) table, olderThanMillis, fileCleaner));
         }
 
         return orphanFilesCleans;
@@ -274,12 +251,17 @@ public class LocalOrphanFilesClean extends OrphanFilesClean {
             String databaseName,
             @Nullable String tableName,
             long olderThanMillis,
-            @Nullable Integer parallelism,
-            boolean dryRun)
+            SerializableConsumer<Path> fileCleaner,
+            @Nullable Integer parallelism)
             throws Catalog.DatabaseNotExistException, Catalog.TableNotExistException {
         List<LocalOrphanFilesClean> tableCleans =
                 createOrphanFilesCleans(
-                        catalog, databaseName, tableName, olderThanMillis, parallelism, dryRun);
+                        catalog,
+                        databaseName,
+                        tableName,
+                        olderThanMillis,
+                        fileCleaner,
+                        parallelism);
 
         ExecutorService executorService =
                 Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());

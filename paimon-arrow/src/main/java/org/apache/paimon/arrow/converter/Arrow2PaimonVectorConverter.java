@@ -519,8 +519,15 @@ public interface Arrow2PaimonVectorConverter {
                         }
 
                         @Override
-                        public ColumnVector[] getChildren() {
-                            return new ColumnVector[] {keyColumnVector, valueColumnVector};
+                        public ColumnVector getKeyColumnVector() {
+                            init();
+                            return keyColumnVector;
+                        }
+
+                        @Override
+                        public ColumnVector getValueColumnVector() {
+                            init();
+                            return valueColumnVector;
                         }
                     };
         }

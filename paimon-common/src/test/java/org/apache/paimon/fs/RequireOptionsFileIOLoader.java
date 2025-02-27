@@ -26,8 +26,6 @@ import java.util.List;
 /** Test {@link FileIOLoader}. */
 public class RequireOptionsFileIOLoader implements FileIOLoader {
 
-    private static final long serialVersionUID = 1L;
-
     @Override
     public String getScheme() {
         return "require-options";
